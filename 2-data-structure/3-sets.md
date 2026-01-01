@@ -1,243 +1,344 @@
-# Redis Sets
+# Redis Sets - Unique Collections & Membership
 
 ## Overview
-A Redis Set is an unordered collection of unique strings. Sets are optimized for membership testing and set operations, making them perfect for tasks requiring uniqueness and fast lookups.
 
-## Key Characteristics
-- **Unordered**: No guaranteed order of elements
-- **Unique**: Each element appears only once (automatic deduplication)
-- **Fast lookups**: O(1) average time complexity for membership checks
-- **Set Operations**: Efficient intersection, union, and difference operations
-- **Memory Efficient**: Optimized internal hash table implementation
-- **No duplicates**: Attempting to add existing member silently succeeds with no effect
+Redis Sets are unordered collections of unique strings. Perfect for:
+- **Tagging**: Article tags, user interests
+- **Membership Testing**: User followers, group members
+- **Set Operations**: Union, intersection, difference
+- **Deduplication**: Unique visitor tracking
+- **Recommendations**: Common interests between users
 
-## Common Commands
+### Why Sets?
 
-### Basic Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `SADD key member [member ...]` | O(N) | Add one or more members |
-| `SREM key member [member ...]` | O(N) | Remove members |
-| `SMEMBERS key` | O(N) | Get all members |
-| `SCARD key` | O(1) | Get set cardinality (count) |
-| `SISMEMBER key member` | O(1) | Check if member exists |
-| `SRANDMEMBER key [count]` | O(N) | Get random members |
-| `SPOP key [count]` | O(N) | Remove and return random members |
+- **O(1) membership testing**: SISMEMBER in constant time
+- **Set operations**: SINTER, SUNION, SDIFF (atomic)
+- **No duplicates**: Automatically enforced
+- **Memory efficient**: ~8 bytes per element
+- **Fast operations**: All major ops are O(1) or O(N)
+
+---
+
+## Core Commands
+
+### Add & Remove
+
+```bash
+# Add members
+SADD users "alice" "bob" "charlie"    # Returns: 3
+
+# Check membership
+SISMEMBER users "alice"                # Returns: 1 (yes)
+SISMEMBER users "david"                # Returns: 0 (no)
+
+# Remove members
+SREM users "bob"                       # Returns: 1 (removed)
+
+# Remove random member
+SPOP users                             # Returns: "charlie"
+```
+
+### Get Members
+
+```bash
+# Get all members
+SMEMBERS users                         # Returns: all members
+
+# Get count
+SCARD users                            # Returns: number of members
+
+# Get random members
+SRANDMEMBER users                      # Returns: one random
+SRANDMEMBER users 3                    # Returns: 3 random
+```
 
 ### Set Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `SINTER key [key ...]` | O(N*M) | Get intersection of sets |
-| `SINTERSTORE dest key [key ...]` | O(N*M) | Store intersection result |
-| `SUNION key [key ...]` | O(N) | Get union of sets |
-| `SUNIONSTORE dest key [key ...]` | O(N) | Store union result |
-| `SDIFF key [key ...]` | O(N) | Get difference of sets |
-| `SDIFFSTORE dest key [key ...]` | O(N) | Store difference result |
-| `SMOVE source dest member` | O(1) | Move member between sets |
 
-## Use Cases
+```bash
+# Union of sets
+SUNION set1 set2                       # All members from both
 
-### 1. Unique Visitor/User Tracking
-Track unique IPs, user IDs, or visitors with daily/hourly granularity.
+# Intersection
+SINTER set1 set2                       # Common members only
 
-```redis
-// Track daily unique visitors
-SADD visitors:2024-01-15 "192.168.1.1"
-SADD visitors:2024-01-15 "192.168.1.2"
-SADD visitors:2024-01-15 "192.168.1.1"  // No effect, already exists
+# Difference
+SDIFF set1 set2                        # In set1 but not set2
 
-// Get total unique visitors
-SCARD visitors:2024-01-15  // Returns: 2
-
-// Check if specific user visited
-SISMEMBER visitors:2024-01-15 "192.168.1.1"  // Returns: 1 (true)
-
-// Compare visitors between days
-SINTER visitors:2024-01-15 visitors:2024-01-16  // Users visiting both days
+# Store results
+SUNIONSTORE dest set1 set2
+SINTERSTORE dest set1 set2
+SDIFFSTORE dest set1 set2
 ```
 
-**Real-world scenario**: Analytics dashboard, daily unique visitors report.
+---
 
-### 2. Tags & Categories
-Store and manage tags efficiently for content.
+## Practical Examples
 
-```redis
-// Add tags to article
-SADD article:123:tags "redis" "database" "cache" "in-memory"
+### Example 1: Tag System
 
-// Get all tags for article
-SMEMBERS article:123:tags
+```python
+import redis
+r = redis.Redis()
 
-// Check if article has specific tag
-SISMEMBER article:123:tags "redis"  // Returns: 1
+# Tag an article
+r.sadd('article:123:tags', 'python', 'redis', 'database')
 
-// Find articles with tag
-SADD tag:redis:articles "article:123" "article:456" "article:789"
+# Check if tagged
+if r.sismember('article:123:tags', 'python'):
+    print("Article has python tag")
 
-// Remove tag from article
-SREM article:123:tags "in-memory"
+# Get all tags
+tags = r.smembers('article:123:tags')
+print(tags)  # {b'python', b'redis', b'database'}
 ```
 
-**Real-world scenario**: Blog categorization, product attributes, content management.
+### Example 2: Follower System
 
-### 3. Friends/Followers Network
-Manage social relationships efficiently.
+```python
+# User A follows user B
+r.sadd('user:b:followers', 'user:a')
+r.sadd('user:a:following', 'user:b')
 
-```redis
-// User 1 follows users
-SADD user:1:following "user:2" "user:3" "user:4"
-SADD user:1:followers "user:5" "user:6"
+# Check if following
+if r.sismember('user:a:following', 'user:b'):
+    print("Following")
 
-// User 2 follows users
-SADD user:2:following "user:1" "user:3" "user:7"
-SADD user:2:followers "user:1" "user:8"
-
-// Check if user 1 follows user 2
-SISMEMBER user:1:following "user:2"  // Returns: 1
-
-// Find mutual followers
-SINTER user:1:followers user:2:followers  // People following both
-
-// Find mutual following
-SINTER user:1:following user:2:following  // Users both follow
+# Get follower count
+count = r.scard('user:b:followers')
+print(f"Followers: {count}")
 ```
 
-**Real-world scenario**: Twitter followers, Facebook friends, LinkedIn connections.
+### Example 3: Common Interests
 
-### 4. Common Interests & Recommendations
-Find users with overlapping interests for recommendations.
+```python
+# User interests
+r.sadd('interests:alice', 'python', 'redis', 'databases')
+r.sadd('interests:bob', 'redis', 'databases', 'caching')
 
-```redis
-// Store interests
-SADD user:1:interests "coding" "gaming" "music" "travel"
-SADD user:2:interests "coding" "sports" "music" "photography"
-SADD user:3:interests "coding" "gaming" "music" "design"
+# Find common interests
+common = r.sinter('interests:alice', 'interests:bob')
+print(common)  # {b'redis', b'databases'}
 
-// Find common interests between users
-SINTER user:1:interests user:2:interests  // Returns: "coding", "music"
-SINTER user:1:interests user:3:interests  // Returns: "coding", "gaming", "music"
-
-// Find unique interests
-SDIFF user:1:interests user:2:interests  // Returns: "gaming", "travel"
+# Recommend people with common interests
+r.sinter('interests:alice', 'interests:bob', 'interests:charlie')
 ```
 
-**Real-world scenario**: Recommendation systems, user matching, interest-based discovery.
+### Example 4: Unique Visitor Tracking
 
-### 5. Deduplication & Uniqueness
-Automatic deduplication of data.
+```python
+# Track unique visitors per day
+r.sadd('visitors:2024-01-01', 'user1', 'user2', 'user3')
+r.sadd('visitors:2024-01-02', 'user2', 'user3', 'user4')
 
-```redis
-// Store emails
-SADD emails:confirmed "john@example.com" "jane@example.com" "bob@example.com"
-SADD emails:pending "jane@example.com" "alice@example.com"
+# Total unique visitors
+r.scard('visitors:2024-01-01')  # 3
+r.scard('visitors:2024-01-02')  # 3
 
-// Get unconfirmed emails
-SDIFF emails:pending emails:confirmed  // Returns: "alice@example.com"
-
-// Move email from pending to confirmed
-SMOVE emails:pending emails:confirmed "jane@example.com"
+# Visitors on both days
+r.sinter('visitors:2024-01-01', 'visitors:2024-01-02')
+# {b'user2', b'user3'}
 ```
 
-**Real-world scenario**: Email lists, user registrations, data cleaning.
+---
 
-### 6. IP Whitelist/Blacklist
-Manage access control lists.
+## Real-World Patterns
 
-```redis
-// IP whitelist
-SADD firewall:whitelist "192.168.1.1" "192.168.1.2" "10.0.0.1"
-SADD firewall:blacklist "203.0.113.1" "198.51.100.5"
+### Pattern 1: Social Network
 
-// Check if IP is allowed
-SISMEMBER firewall:whitelist "192.168.1.1"  // Returns: 1
-SISMEMBER firewall:blacklist "203.0.113.1"  // Returns: 1
+```python
+# User A follows user B
+def follow_user(user_a, user_b):
+    r.sadd(f'user:{user_a}:following', user_b)
+    r.sadd(f'user:{user_b}:followers', user_a)
 
-// Find IPs in both lists
-SINTER firewall:whitelist firewall:blacklist  // Should be empty
+# Get mutual friends
+def get_mutual_friends(user_a, user_b):
+    a_following = f'user:{user_a}:following'
+    b_followers = f'user:{user_b}:followers'
+    return r.sinter(a_following, b_followers)
+
+# Get suggestions (friends of friends)
+def get_suggestions(user_a):
+    following = f'user:{user_a}:following'
+    # Get all friends of my friends
+    friends_of_friends = set()
+    for friend in r.smembers(following):
+        friends = r.smembers(f'user:{friend}:following')
+        friends_of_friends.update(friends)
+    
+    # Remove already following
+    friends_of_friends -= r.smembers(following)
+    return friends_of_friends
 ```
 
-### 7. Random Selection (Sampling)
-Pick random items for surveys, notifications, etc.
+### Pattern 2: Online Users Tracking
 
-```redis
-// Store user IDs
-SADD active:users "user:1" "user:2" "user:3" "user:4" "user:5"
+```python
+def mark_online(user_id):
+    """Mark user as online"""
+    r.sadd('users:online', user_id)
 
-// Get 3 random users for survey
-SRANDMEMBER active:users 3  // Returns 3 random users
+def mark_offline(user_id):
+    """Mark user as offline"""
+    r.srem('users:online', user_id)
 
-// Remove and return random user
-SPOP online:users  // Returns 1 random user and removes it
-SPOP online:users 5  // Returns 5 random users and removes them
+def get_online_count():
+    """Get total online users"""
+    return r.scard('users:online')
+
+def are_friends_online(user_id):
+    """Check which friends are online"""
+    friends = r.smembers(f'user:{user_id}:friends')
+    online = r.smembers('users:online')
+    return friends & online  # Intersection
 ```
 
-**Real-world scenario**: A/B testing, random user sampling, lottery selection.
+### Pattern 3: Content Recommendations
 
-## Advanced Patterns
-
-### Bloom Filter Simulation
-```redis
-// Check if URL already crawled
-SADD crawled:urls "https://example.com"
-SISMEMBER crawled:urls "https://example.com"  // Returns: 1
+```python
+def get_recommendations(user_id, num_recommendations=5):
+    """Get recommended content based on interests"""
+    # Get user's interests
+    interests = r.smembers(f'user:{user_id}:interests')
+    
+    # Get popular content for each interest
+    recommended = set()
+    for interest in interests:
+        content = r.smembers(f'content:interest:{interest}')
+        recommended.update(content)
+    
+    # Remove already viewed
+    viewed = r.smembers(f'user:{user_id}:viewed')
+    recommended -= viewed
+    
+    return list(recommended)[:num_recommendations]
 ```
 
-### Multi-set Intersection
-```redis
-// Find users active in multiple segments
-SINTER segment:premium segment:usa segment:active
+---
 
-// Store result
-SINTERSTORE result:target_users segment:premium segment:usa segment:active
-SCARD result:target_users  // Get count of target users
+## Performance
+
+```
+Operation              Time     Memory
+──────────────────────────────────────
+SADD                   O(1)     8 bytes per element
+SREM                   O(1)     Constant
+SISMEMBER              O(1)     Constant
+SMEMBERS               O(N)     Returns N elements
+SINTER                 O(N×M)   Where N=smallest set
+SUNION                 O(N)     All members
+SDIFF                  O(N)     All members
+SPOP (single)          O(1)     Constant
 ```
 
-### Set Union for Analytics
-```redis
-// Total unique users across all days
-SUNION visitors:2024-01-15 visitors:2024-01-16 visitors:2024-01-17
-
-// Store for reporting
-SUNIONSTORE visitors:week:total visitors:2024-01-15 visitors:2024-01-16
-```
-
-## Performance Characteristics
-
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Add/Remove | O(1) | Average case, per member |
-| Membership check | O(1) | Average case |
-| Get all members | O(N) | N = cardinality |
-| Intersection | O(N*M) | N = smallest set, M = number of sets |
-| Union | O(N) | N = total elements |
-| Difference | O(N) | N = cardinality of first set |
-| Random element | O(1) | Expected, with small cardinality advantage |
-
-## Memory Considerations
-
-- Sets use hash table internally for O(1) membership
-- Memory overhead per element: ~8 bytes pointer + value size
-- Smaller sets more memory-efficient than equivalent lists
-- String interning optimization for duplicate values across sets
-
-## Limitations
-
-- **Unordered**: Cannot retrieve elements by rank
-- **No duplication**: Cannot store same element twice (use Lists or Sorted Sets)
-- **No scoring**: Elements have no associated values (use Hashes or Sorted Sets)
-- **Set operations complexity**: O(N*M) intersections can be expensive
+---
 
 ## Best Practices
 
-1. **Use SISMEMBER for membership tests**: O(1) is much faster than SMEMBERS
-2. **Cache intersection results**: Use SINTERSTORE for frequent operations
-3. **Limit set sizes**: Very large sets increase memory usage and operation time
-4. **Index by tag**: Pre-calculate reverse indexes (tag → items)
-5. **Expire sets**: Use EXPIRE for temporary sets like sessions or rate limits
+### 1. Use Sets for Membership Testing
 
-## Common Pitfalls
+```python
+# ✅ DO: Use sets
+r.sadd('article:tags', 'python')
+if r.sismember('article:tags', 'python'):
+    pass
 
-1. **SMEMBERS for large sets**: O(N) operation can block Redis
-2. **Expensive intersections**: Multiple large sets intersection is slow
-3. **Memory growth**: Sets without EXPIRE can consume unbounded memory
-4. **Type mismatches**: Adding non-string values requires serialization
+# ❌ DON'T: Use lists or strings
+tags_list = ['python', 'redis']  # O(N) lookup
+if 'python' in tags_list:
+    pass
+```
+
+### 2. Use Set Operations for Queries
+
+```python
+# ✅ DO: Let Redis handle intersection
+common = r.sinter('interests:alice', 'interests:bob')
+
+# ❌ DON'T: Fetch and compute in application
+a_interests = set(r.smembers('interests:alice'))
+b_interests = set(r.smembers('interests:bob'))
+common = a_interests & b_interests
+```
+
+### 3. Store Results with XXSTORE Commands
+
+```python
+# ✅ DO: Atomic operation
+r.sinterstore('common:interests', 'user:a:interests', 'user:b:interests')
+
+# ❌ DON'T: Separate operations
+common = r.sinter(...)
+r.delete('common:interests')
+# Gap between operations!
+```
+
+### 4. Monitor Set Size
+
+```python
+# ✅ DO: Track set growth
+count = r.scard('tags')
+if count > 10000:
+    alert("Too many tags!")
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Using Lists Instead of Sets
+
+```python
+# ❌ WRONG: O(N) membership testing
+r.rpush('tags', 'python', 'redis')
+if 'python' in r.lrange('tags', 0, -1):  # O(N)
+    pass
+
+# ✅ RIGHT: O(1) with sets
+r.sadd('tags', 'python', 'redis')
+if r.sismember('tags', 'python'):  # O(1)
+    pass
+```
+
+### Mistake 2: Not Deduplicating Input
+
+```python
+# ❌ WRONG: Duplicates in input
+r.sadd('tags', 'python', 'python', 'redis')
+# Sets handle this, but wasteful
+
+# ✅ RIGHT: Deduplicate first
+tags = set(['python', 'redis'])
+r.sadd('tags', *tags)
+```
+
+### Mistake 3: Ignoring Set Operation Cost
+
+```python
+# ❌ WRONG: Large set operations are slow
+# SINTER on million-element sets = slow
+
+# ✅ RIGHT: Precompute if used frequently
+r.sinterstore('common:users', 'set1', 'set2')
+r.expire('common:users', 3600)  # Cache for 1 hour
+```
+
+### Mistake 4: Wrong Data Structure Choice
+
+```python
+# ❌ WRONG: Using set when order matters
+r.sadd('leaderboard', user1, user2)
+# Sets don't preserve order or scores
+
+# ✅ RIGHT: Use sorted set for rankings
+r.zadd('leaderboard', {'user1': 100, 'user2': 95})
+```
+
+---
+
+## Next Steps
+
+- **[Hashes](4-hashes.md)** - Structured objects
+- **[Sorted Sets](5-sorted-set.md)** - Rankings
+- **[Streams](6-stream.md)** - Event logs
+

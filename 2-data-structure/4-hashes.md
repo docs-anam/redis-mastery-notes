@@ -1,281 +1,356 @@
-# Redis Hashes
+# Redis Hashes - Objects & Structured Data
 
 ## Overview
-Redis hashes are collections of field-value pairs, similar to objects, dictionaries, or maps in programming languages. They're ideal for storing and retrieving structured data with multiple attributes. Hashes provide more memory efficiency and better organization than storing multiple related string keys.
 
-## Key Characteristics
-- **Structure**: Key → {field1: value1, field2: value2, ...}
-- **Data Type**: Hash (mapping/dictionary-like collection)
-- **Memory Efficient**: Better than N individual string keys
-- **Atomic Operations**: Individual field operations are atomic
-- **Partial retrieval**: Can fetch specific fields without loading entire hash
-- **Numeric operations**: Direct increment/decrement without serialization
+Redis Hashes are maps of field → value pairs. Perfect for:
+- **User Profiles**: Name, email, age, location
+- **Configuration Objects**: Settings, parameters
+- **Document-like Data**: Nested structures
+- **Database Rows**: Alternative to relational queries
+- **Counters**: Per-field increment operations
 
-## Common Commands
+### Why Hashes?
 
-### Basic Field Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `HSET key field value [field value ...]` | O(N) | Set one or more fields |
-| `HGET key field` | O(1) | Get single field value |
-| `HMGET key field [field ...]` | O(N) | Get multiple field values |
-| `HGETALL key` | O(N) | Get all fields and values |
-| `HSTRLEN key field` | O(1) | Get value length in bytes |
+- **O(1) field access**: Direct lookups by field
+- **Atomic field updates**: Update single field without touching others
+- **Memory efficient**: Overhead split across fields
+- **Intuitive mapping**: Like Python dicts or JSON objects
+- **No serialization**: Work with fields directly
 
-### Field Management
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `HDEL key field [field ...]` | O(N) | Delete one or more fields |
-| `HEXISTS key field` | O(1) | Check if field exists |
-| `HKEYS key` | O(N) | Get all field names |
-| `HVALS key` | O(N) | Get all values |
-| `HLEN key` | O(1) | Count total fields |
-| `HRANDFIELD key [count]` | O(N) | Get random fields |
+---
 
-### Numeric Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `HINCRBY key field increment` | O(1) | Increment integer value |
-| `HINCRBYFLOAT key field increment` | O(1) | Increment float value |
+## Core Commands
 
-### Conditional Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `HSETNX key field value` | O(1) | Set only if field doesn't exist |
+### Set & Get
 
-## Use Cases
+```bash
+# Set single field
+HSET user:123 name "Alice" age "30"      # Returns: 2 (fields added)
 
-### 1. User Profiles
-Store complete user information efficiently.
+# Get field
+HGET user:123 name                        # Returns: "Alice"
 
-```redis
-// Create user profile
-HSET user:1 name "John Doe" email "john@example.com" age 30 city "New York" premium 1
-HSET user:2 name "Jane Smith" email "jane@example.com" age 28 city "Boston"
+# Get multiple fields
+HMGET user:123 name age city              # Returns: ["Alice", "30", nil]
 
-// Get specific user info
-HGET user:1 email  // Returns: "john@example.com"
-
-// Get multiple fields
-HMGET user:1 name email age  // Returns: ["John Doe", "john@example.com", "30"]
-
-// Get entire profile
-HGETALL user:1
-
-// Update single field
-HSET user:1 city "San Francisco"
-
-// Increment age on birthday
-HINCRBY user:1 age 1
-
-// Delete field
-HDEL user:1 premium
+# Get all fields and values
+HGETALL user:123                          # Returns: all fields and values
 ```
 
-**Real-world scenario**: User account management, CRM systems.
+### Check & Count
 
-### 2. Product Catalogs
-Store product attributes with efficient updates.
+```bash
+# Check if field exists
+HEXISTS user:123 name                     # Returns: 1 (yes)
 
-```redis
-// Create product
-HSET product:123 name "Laptop" price 999.99 stock 50 category "Electronics" rating 4.5
-HSET product:123 description "High-performance laptop" manufacturer "TechCorp"
+# Get field count
+HLEN user:123                             # Returns: number of fields
 
-// Get product price
-HGET product:123 price  // Returns: "999.99"
+# Get all field names
+HKEYS user:123                            # Returns: [name, age, ...]
 
-// Get for display
-HMGET product:123 name price rating  // For product list
-
-// Update stock when sold
-HINCRBY product:123 stock -1  // Decrement by 1
-
-// Update rating
-HINCRBYFLOAT product:123 rating 0.1
-
-// Check if in stock
-HGET product:123 stock
+# Get all values
+HVALS user:123                            # Returns: [Alice, 30, ...]
 ```
 
-**Real-world scenario**: E-commerce systems, inventory management, catalog data.
+### Increment
 
-### 3. Session Data
-Manage user session information.
+```bash
+# Increment integer field
+HINCRBY user:123 age 1                    # Returns: 31
 
-```redis
-// Create session
-HSET session:abc123 user_id "user:1" ip "192.168.1.1" login_time "2024-01-15T10:30:00Z"
-HSET session:abc123 last_activity "2024-01-15T10:35:00Z" device "mobile"
-
-// Get session
-HGETALL session:abc123
-
-// Update last activity
-HSET session:abc123 last_activity "2024-01-15T10:40:00Z"
-
-// Set expiration for cleanup
-EXPIRE session:abc123 3600  // 1 hour session timeout
+# Increment float field
+HINCRBYFLOAT user:123 balance 10.50       # Returns: 110.50
 ```
 
-**Real-world scenario**: Web session management, API authentication.
+### Delete & Update
 
-### 4. Counters & Metrics
-Track metrics with built-in increment operations.
+```bash
+# Delete field
+HDEL user:123 age                         # Returns: 1 (deleted)
 
-```redis
-// Page view counters
-HINCRBY stats:2024-01-15 page:home 100
-HINCRBY stats:2024-01-15 page:about 50
-HINCRBY stats:2024-01-15 page:product 75
+# Update field (same as HSET)
+HSET user:123 age 31                      # Returns: 0 (updated)
 
-// Get all stats
-HGETALL stats:2024-01-15
-
-// User statistics
-HSET user:1:stats posts 42 followers 1500 following 300 likes 5000
-HINCRBY user:1:stats posts 1  // New post
-HINCRBY user:1:stats likes 1   // New like
+# Set only if doesn't exist
+HSETNX user:123 email "alice@example.com" # Returns: 1 (set)
 ```
 
-**Real-world scenario**: Analytics, page views, performance metrics.
+---
 
-### 5. Configuration Objects
-Store application settings hierarchically.
+## Practical Examples
 
-```redis
-// Email configuration
-HSET config:email smtp_host "mail.example.com" smtp_port 587 from_addr "noreply@example.com"
-HSET config:email username "smtp_user" password "encrypted_pwd" tls_enabled 1
+### Example 1: User Profile
 
-// Database configuration
-HSET config:db host "localhost" port 5432 database "myapp" pool_size 10
+```python
+import redis
+r = redis.Redis()
 
-// Get setting
-HGET config:email smtp_host
+# Create profile
+profile_data = {
+    'name': 'Alice',
+    'email': 'alice@example.com',
+    'age': '30',
+    'city': 'New York'
+}
+r.hset('user:123', mapping=profile_data)
 
-// Get all config
-HGETALL config:db
+# Get single field
+name = r.hget('user:123', 'name')         # b'Alice'
+
+# Get all
+all_data = r.hgetall('user:123')
+
+# Update one field
+r.hset('user:123', 'age', '31')
 ```
 
-**Real-world scenario**: Application configuration, feature flags.
+### Example 2: Product Catalog
 
-### 6. Shopping Cart
-Manage cart items with quantities.
+```python
+# Store product
+product_data = {
+    'name': 'Redis Guide',
+    'price': '29.99',
+    'stock': '100',
+    'rating': '4.8'
+}
+r.hset('product:456', mapping=product_data)
 
-```redis
-// Add items to cart
-HSET cart:user:123 product:101 2  // 2 units of product 101
-HSET cart:user:123 product:202 1  // 1 unit of product 202
-HSET cart:user:123 product:303 3  // 3 units of product 303
+# Decrement stock
+r.hincrby('product:456', 'stock', -1)
 
-// Get cart
-HGETALL cart:user:123  // Returns all items and quantities
-
-// Update quantity
-HINCRBY cart:user:123 product:101 1  // Add 1 more
-HSET cart:user:123 product:101 0    // Or set quantity
-
-// Remove item
-HDEL cart:user:123 product:101
-
-// Clear cart
-DEL cart:user:123
+# Get price
+price = r.hget('product:456', 'price')
 ```
 
-**Real-world scenario**: E-commerce carts, shopping baskets.
+### Example 3: Session Storage
 
-### 7. Leaderboard with Metadata
-Store scores with additional information.
+```python
+# Store session
+session_data = {
+    'user_id': '123',
+    'username': 'alice',
+    'logged_in_at': '2024-01-01T10:00:00',
+    'ip_address': '192.168.1.1'
+}
+r.hset('session:abc123', mapping=session_data)
+r.expire('session:abc123', 3600)  # 1 hour expiration
 
-```redis
-// Player data
-HSET player:1 username "Alice" level 50 experience 95000 last_win "2024-01-15"
-HSET player:2 username "Bob" level 48 experience 88000 last_win "2024-01-14"
-
-// Get player info
-HGET player:1 username  // Returns: "Alice"
-HMGET player:1 level experience
-
-// Update experience
-HINCRBY player:1 experience 1000
-
-// Increment level
-HINCRBY player:1 level 1
+# Retrieve session
+session = r.hgetall('session:abc123')
 ```
 
-## Advanced Patterns
+### Example 4: Analytics Counter
 
-### Conditional Field Update
-```redis
-// Set only if doesn't exist
-HSETNX user:1 created_at "2024-01-15T10:00:00Z"  // Returns 1 (success) first time
-HSETNX user:1 created_at "2024-01-15T11:00:00Z"  // Returns 0 (failed) on retry
+```python
+# Track events per day
+r.hincrby('analytics:2024-01-01', 'page_views', 1)
+r.hincrby('analytics:2024-01-01', 'visits', 1)
+r.hincrby('analytics:2024-01-01', 'signups', 1)
+
+# Get all metrics
+metrics = r.hgetall('analytics:2024-01-01')
 ```
 
-### Batch Operations
-```redis
-// Multiple updates
-HSET product:123 price 99.99 stock 100 available 1 on_sale 0
+---
 
-// Fetch specific fields
-HMGET product:123 price stock available
+## Real-World Patterns
+
+### Pattern 1: User Profile with Expiration
+
+```python
+def create_user_profile(user_id, profile_data, ttl=86400):
+    """Create profile with 24-hour expiration"""
+    key = f'user:{user_id}:profile'
+    r.hset(key, mapping=profile_data)
+    r.expire(key, ttl)
+    return key
+
+def get_user_profile(user_id):
+    """Retrieve user profile"""
+    key = f'user:{user_id}:profile'
+    profile = r.hgetall(key)
+    return profile if profile else None
 ```
 
-### Atomic Increment Across Fields
-```redis
-// Simulate transaction-like behavior
-HINCRBY account:user1 balance -100
-HINCRBY account:user2 balance 100
+### Pattern 2: Configuration Storage
+
+```python
+# Store app configuration
+config = {
+    'max_connections': '100',
+    'timeout': '30',
+    'debug': 'false',
+    'version': '1.0.0'
+}
+r.hset('config:app', mapping=config)
+
+# Get config value
+max_conn = r.hget('config:app', 'max_connections')
+
+# Update one setting
+r.hset('config:app', 'debug', 'true')
 ```
 
-## Performance Characteristics
+### Pattern 3: Leaderboard Scores
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Set field | O(1) | Single field |
-| Get field | O(1) | Single field |
-| Get all fields | O(N) | N = number of fields |
-| Increment | O(1) | Per field |
-| Delete field | O(N) | N = number of deleted fields |
-| Field check | O(1) | Fast membership test |
+```python
+def update_score(game_id, player_id, score):
+    """Update player score"""
+    r.hset(f'game:{game_id}:scores', player_id, score)
 
-## Memory Comparison: Strings vs Hashes
-
-```redis
-// Method 1: Multiple string keys
-SET user:1:name "John"
-SET user:1:email "john@example.com"
-SET user:1:age "30"
-// Memory: 3 keys + 3 expiration entries + overhead
-
-// Method 2: Single hash (more efficient)
-HSET user:1 name "John" email "john@example.com" age "30"
-// Memory: 1 key + 3 fields (less overhead)
+def get_leaderboard(game_id):
+    """Get all scores"""
+    scores = r.hgetall(f'game:{game_id}:scores')
+    # Sort by score (in application)
+    return sorted(scores.items(), key=lambda x: -int(x[1]))
 ```
 
-Memory savings: ~30-50% for typical use cases with 5+ fields.
+---
 
-## Limitations
+## Performance
 
-- **No nested hashes**: Cannot store hash within hash (use JSON strings)
-- **No sorting by field values**: Use Sorted Sets for ranked data
-- **String values only**: All field values must be strings (serialize for objects)
-- **No transactions**: Operations not ACID, use Lua for multi-field transactions
+```
+Operation              Time     Memory
+──────────────────────────────────────
+HSET                   O(1)     16 bytes per field
+HGET                   O(1)     Constant
+HGETALL                O(N)     Returns N fields
+HLEN                   O(1)     Constant
+HINCRBY                O(1)     Constant
+HDEL                   O(N)     For N fields
+HMGET                  O(N)     For N fields
+```
+
+---
 
 ## Best Practices
 
-1. **Use HSET for bulk operations**: HSET key f1 v1 f2 v2 is more efficient
-2. **Prefer HMGET over HGETALL**: Only fetch needed fields
-3. **Use HINCRBY for counters**: Better than GET→increment→SET
-4. **Limit hash size**: Keep fields < 1000 per hash
-5. **Set TTL on hashes**: Use EXPIRE for temporary data
-6. **Index frequently accessed fields**: Consider separate keys for hot data
+### 1. Use Hashes for Objects
 
-## Common Pitfalls
+```python
+# ✅ DO: Structured data with hash
+r.hset('user:123', mapping={
+    'name': 'Alice',
+    'age': '30',
+    'email': 'alice@example.com'
+})
 
-1. **HGETALL for large hashes**: O(N) operation loads entire hash
-2. **Type confusion**: Redis doesn't distinguish field types, store as strings
-3. **Memory for sparse data**: Each field has overhead, don't store many nulls
-4. **No atomic multi-key operations**: Cannot atomically update across hashes
-5. **Missing TTL**: Hashes without expiration persist indefinitely
+# ❌ DON'T: Serialize to JSON
+import json
+data = json.dumps({'name': 'Alice', 'age': 30})
+r.set('user:123', data)
+# Now updating age requires full parse/serialize
+```
+
+### 2. Atomic Field Updates
+
+```python
+# ✅ DO: Update single field
+r.hset('user:123', 'age', '31')
+
+# ❌ DON'T: Get-modify-set (race condition)
+user = r.hgetall('user:123')
+user['age'] = 31
+r.delete('user:123')
+r.hset('user:123', mapping=user)
+```
+
+### 3. Use Increment for Counters
+
+```python
+# ✅ DO: Atomic increment
+r.hincrby('user:123', 'post_count', 1)
+
+# ❌ DON'T: Manual increment
+count = int(r.hget('user:123', 'post_count') or 0)
+r.hset('user:123', 'post_count', count + 1)
+```
+
+### 4. Expire Entire Hash
+
+```python
+# ✅ DO: Set TTL on entire hash
+r.hset('session:abc', mapping=session_data)
+r.expire('session:abc', 3600)
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Storing Complex Nested Data
+
+```python
+# ❌ WRONG: Nested object in field
+user = {
+    'profile': {
+        'name': 'Alice',
+        'age': 30,
+        'address': {
+            'city': 'NYC',
+            'zip': '10001'
+        }
+    }
+}
+r.hset('user:123', 'profile', json.dumps(user['profile']))
+# Now updating nested field is hard!
+
+# ✅ RIGHT: Flatten the structure
+r.hset('user:123', mapping={
+    'name': 'Alice',
+    'age': '30',
+    'city': 'NYC',
+    'zip': '10001'
+})
+```
+
+### Mistake 2: Not Setting Expiration
+
+```python
+# ❌ WRONG: Session never expires
+r.hset('session:123', mapping=session_data)
+# After years: millions of old sessions!
+
+# ✅ RIGHT: Always set TTL
+r.hset('session:123', mapping=session_data)
+r.expire('session:123', 3600)
+```
+
+### Mistake 3: Race Conditions
+
+```python
+# ❌ WRONG: Non-atomic read-modify-write
+score = int(r.hget('game:player:123', 'score') or 0)
+r.hset('game:player:123', 'score', score + 10)
+# Between HGET and HSET, another update could occur
+
+# ✅ RIGHT: Use atomic operation
+r.hincrby('game:player:123', 'score', 10)
+```
+
+### Mistake 4: Large Hash Values
+
+```python
+# ❌ WRONG: Storing large text in field
+large_text = "..." * 1000000  # 1MB
+r.hset('doc:123', 'content', large_text)
+
+# ✅ RIGHT: Store separately as string
+r.set('doc:123:content', large_text)
+r.hset('doc:123', mapping={
+    'title': 'Title',
+    'author': 'Author',
+    'size': len(large_text)
+})
+```
+
+---
+
+## Next Steps
+
+- **[Sorted Sets](5-sorted-set.md)** - Rankings and scoring
+- **[Streams](6-stream.md)** - Event logs
+- **[Lists](2-lists.md)** - Queues and sequences
+

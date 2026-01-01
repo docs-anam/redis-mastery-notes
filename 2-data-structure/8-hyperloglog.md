@@ -1,258 +1,315 @@
-# HyperLogLog in Redis
+# Redis HyperLogLog - Cardinality Estimation
 
 ## Overview
-HyperLogLog is a probabilistic data structure for estimating the cardinality (number of unique elements) of a set with minimal memory usage (~12KB regardless of set size). It trades accuracy for space efficiency with ~0.81% standard error, ideal for counting unique visitors, searches, and large-scale deduplication.
 
-## Key Characteristics
-- **Memory Efficient**: Constant ~12KB memory regardless of cardinality
-- **Probabilistic**: Approximate counts, not exact values
-- **Fast**: O(1) time complexity for additions and merges
-- **Error Rate**: Standard error of ~0.81%
-- **Mergeable**: Can combine multiple HyperLogLogs
-- **Unique Elements**: Designed specifically for cardinality estimation
+Redis HyperLogLog is a probabilistic data structure for estimating cardinality (unique count). Perfect for:
+- **Unique Visitors**: Count unique users per day
+- **Unique IPs**: Track distinct IPs accessing site
+- **Deduplication**: Fast cardinality with minimal memory
+- **Search Metrics**: Unique terms in search queries
+- **Bloom Filters**: Approximate membership
 
-## Common Commands
+### Why HyperLogLog?
 
-### Basic Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `PFADD key element [element ...]` | O(1) | Add elements to HyperLogLog |
-| `PFCOUNT key [key ...]` | O(N) | Get cardinality estimate |
-| `PFMERGE dest source [source ...]` | O(N) | Merge multiple HyperLogLogs |
+- **Remarkable Memory**: ~12KB for billions of items
+- **O(1) Operations**: Add and count in constant time
+- **Probabilistic**: Small error rate (0.81% default)
+- **Union Operations**: Merge HLLs atomically
+- **Scalable**: No memory growth with data
 
-### Key Points
-- PFADD returns 1 if HLL was modified, 0 if not
-- PFCOUNT can estimate for multiple keys at once
-- PFMERGE combines estimates from multiple HLLs
+---
 
-## Use Cases
+## Core Commands
 
-### 1. Unique Daily Visitors
-Track unique users visiting website per day with minimal memory.
+### Add & Count
 
-```redis
-// Add daily visitors
-PFADD visitors:2024-01-15 "192.168.1.1"
-PFADD visitors:2024-01-15 "192.168.1.2"
-PFADD visitors:2024-01-15 "192.168.1.3"
-PFADD visitors:2024-01-15 "192.168.1.1"  // Duplicate, still O(1)
+```bash
+# Add elements
+PFADD users:today "user1" "user2" "user3"    # Returns: 1 (added)
 
-// Get estimated unique visitors today
-PFCOUNT visitors:2024-01-15  // Returns: ~3 (actual: 3)
+# Check cardinality
+PFCOUNT users:today                           # Returns: ~3
 
-// Multiple days
-PFCOUNT visitors:2024-01-15 visitors:2024-01-16 visitors:2024-01-17
-// Returns: ~450 (union of all three days)
-
-// Get month total
-PFMERGE visitors:month:2024-01 visitors:2024-01-01 visitors:2024-01-02 ... visitors:2024-01-31
-PFCOUNT visitors:month:2024-01  // Month's unique visitors
+# Multiple HLLs
+PFCOUNT users:today users:yesterday           # Union count
 ```
 
-**Real-world scenario**: Web analytics, unique visitor tracking, traffic analysis.
+### Merge HLLs
 
-### 2. Unique Search Queries
-Track how many unique search terms users searched.
-
-```redis
-// Log searches
-PFADD searches:2024-01-15 "redis tutorial"
-PFADD searches:2024-01-15 "python guide"
-PFADD searches:2024-01-15 "redis tutorial"  // Duplicate, still efficient
-PFADD searches:2024-01-15 "javascript"
-PFADD searches:2024-01-15 "python guide"
-
-// Estimated unique queries
-PFCOUNT searches:2024-01-15  // Returns: ~3 (actual: 3)
-
-// Compare search volume across days
-PFCOUNT searches:2024-01-14 searches:2024-01-15 searches:2024-01-16
-
-// Weekly search diversity
-PFMERGE searches:week:1 searches:monday searches:tuesday searches:wednesday
-PFCOUNT searches:week:1
+```bash
+# Merge multiple HLLs
+PFMERGE users:week users:day1 users:day2 users:day3
+# Result in users:week contains combined HLL
 ```
 
-**Real-world scenario**: Search analytics, trending topics, unique queries.
+---
 
-### 3. Unique IP Addresses & Bot Detection
-Count unique IPs accessing your service.
+## Practical Examples
 
-```redis
-// Track IPs per endpoint
-PFADD ips:api:users:get "192.168.1.1"
-PFADD ips:api:users:get "192.168.1.2"
-PFADD ips:api:users:get "203.0.113.5"    // Potential bot
-PFADD ips:api:users:get "198.51.100.10"  // Potential bot
+### Example 1: Daily Unique Visitors
 
-// Estimated unique IPs
-PFCOUNT ips:api:users:get  // Returns: ~4
+```python
+import redis
+from datetime import datetime, timedelta
 
-// Track suspicious endpoints
-PFADD ips:api:auth:login "203.0.113.5"
-PFADD ips:api:auth:login "203.0.113.5"
-PFADD ips:api:auth:login "203.0.113.5"
-// If many requests from few IPs, likely attack
+r = redis.Redis()
 
-// Compare IP diversity across endpoints
-PFCOUNT ips:api:users:get ips:api:products:list ips:api:auth:login
+# Track visitors
+def track_visitor(user_id):
+    today = datetime.now().strftime('%Y-%m-%d')
+    key = f'visitors:{today}'
+    r.pfadd(key, user_id)
+    r.expire(key, 7*86400)  # Keep for 7 days
+
+# Get unique visitors
+def get_visitors(date_str):
+    key = f'visitors:{date_str}'
+    return r.pfcount(key)
+
+# Usage
+track_visitor('user123')
+track_visitor('user456')
+track_visitor('user123')  # Duplicate ignored
+print(f"Today: {get_visitors('2024-01-01')} visitors")
 ```
 
-**Real-world scenario**: Bot detection, DDoS analysis, API monitoring.
+### Example 2: Unique IP Tracking
 
-### 4. Unique Hashtags & Topics
-Track diversity of topics in social media.
+```python
+# Track IPs per endpoint
+def log_request(endpoint, ip_address):
+    key = f'ips:endpoint:{endpoint}'
+    r.pfadd(key, ip_address)
 
-```redis
-// Instagram hashtags
-PFADD hashtags:2024-01 "#redis" "#database" "#cache"
-PFADD hashtags:2024-01 "#python" "#redis" "#optimization"
-PFADD hashtags:2024-01 "#coding" "#beginner" "#tutorial"
+# Analytics
+def get_unique_ips(endpoint):
+    key = f'ips:endpoint:{endpoint}'
+    return r.pfcount(key)
 
-// Estimated unique hashtags
-PFCOUNT hashtags:2024-01  // Returns: ~7 (actual: 8)
+# Usage
+log_request('/api/users', '192.168.1.1')
+log_request('/api/users', '192.168.1.2')
+log_request('/api/users', '192.168.1.1')  # Duplicate
 
-// Topic diversity per day
-PFCOUNT hashtags:2024-01-15 hashtags:2024-01-16 hashtags:2024-01-17
-
-// Trending topics
-PFMERGE trending:week hashtags:monday hashtags:tuesday hashtags:wednesday
-PFCOUNT trending:week
+print(f"Unique IPs: {get_unique_ips('/api/users')}")  # ~2
 ```
 
-**Real-world scenario**: Social media analytics, hashtag tracking, trending topics.
+### Example 3: Weekly Uniques from Daily
 
-### 5. Unique Products Viewed
-Track how many different products users viewed.
-
-```redis
-// User views products
-PFADD user:123:viewed:products "product:101"
-PFADD user:123:viewed:products "product:102"
-PFADD user:123:viewed:products "product:103"
-PFADD user:123:viewed:products "product:101"  // Reviewed, still O(1)
-
-// How many unique products viewed?
-PFCOUNT user:123:viewed:products  // Returns: ~3
-
-// Compare browsing across users
-PFCOUNT user:123:viewed:products user:124:viewed:products user:125:viewed:products
-
-// Store-wide metrics
-PFMERGE store:unique:products user:123:viewed:products user:124:viewed:products ...
-PFCOUNT store:unique:products  // All unique products viewed by any user
+```python
+# Merge daily HLLs to get weekly
+def get_week_visitors(year, week_num):
+    keys = [f'visitors:{year}-W{week_num}-{day}' for day in range(1, 8)]
+    
+    # Merge all 7 days
+    dest_key = f'visitors:week:{year}-W{week_num}'
+    r.pfmerge(dest_key, *keys)
+    
+    # Get count
+    count = r.pfcount(dest_key)
+    r.expire(dest_key, 30*86400)  # Keep for 30 days
+    
+    return count
 ```
 
-**Real-world scenario**: E-commerce browsing, product discovery analytics, user profiling.
+### Example 4: Search Analytics
 
-### 6. Unique Active Users
-Count distinct users during time period.
+```python
+# Track unique search terms per user
+def log_search(user_id, search_term):
+    key = f'searches:user:{user_id}'
+    r.pfadd(key, search_term)
 
-```redis
-// Log active users per hour
-PFADD active:users:2024-01-15:08 "user:101" "user:102" "user:103"
-PFADD active:users:2024-01-15:09 "user:102" "user:104" "user:105"
-PFADD active:users:2024-01-15:10 "user:101" "user:105" "user:106"
+# Get unique search terms
+def get_search_variety(user_id):
+    key = f'searches:user:{user_id}'
+    return r.pfcount(key)
 
-// Hourly active users
-PFCOUNT active:users:2024-01-15:08  // Returns: ~3
+# Usage
+log_search('user1', 'redis')
+log_search('user1', 'redis')  # Duplicate
+log_search('user1', 'database')
+log_search('user1', 'cache')
 
-// Daily active users (union)
-PFCOUNT active:users:2024-01-15:08 active:users:2024-01-15:09 active:users:2024-01-15:10
-// Returns: ~5
-
-// Monthly active users
-PFMERGE active:users:month:2024-01 active:users:2024-01-15 active:users:2024-01-16 ...
-PFCOUNT active:users:month:2024-01
+print(f"User1 unique searches: {get_search_variety('user1')}")  # ~3
 ```
 
-**Real-world scenario**: User engagement metrics, DAU/MAU calculations, concurrent users.
+---
 
-## Accuracy & Error Rate
+## Real-World Pattern: Visitor Funnel
 
-```
-HyperLogLog accuracy:
-- Standard error: ±0.81%
-- For 1 million items: ±8,100 items error
-- For 1 billion items: ±8.1 million items error
+```python
+def track_funnel_event(funnel_name, stage, user_id):
+    """Track user through funnel stages"""
+    key = f'funnel:{funnel_name}:{stage}'
+    r.pfadd(key, user_id)
 
-Comparison with alternatives:
-- Exact set (SADD): O(N) memory, O(1) operations
-- HyperLogLog (PFADD): O(1) memory, O(1) operations, ±0.81% error
-- Trade: Accuracy for massive memory savings
-```
+def get_funnel_metrics(funnel_name):
+    """Calculate funnel metrics"""
+    stages = ['landing', 'signup', 'confirm', 'payment']
+    counts = {}
+    
+    for stage in stages:
+        key = f'funnel:{funnel_name}:{stage}'
+        counts[stage] = r.pfcount(key)
+    
+    # Calculate dropoff
+    for i in range(1, len(stages)):
+        prev_stage = stages[i-1]
+        curr_stage = stages[i]
+        if counts[prev_stage] > 0:
+            dropoff = (1 - counts[curr_stage] / counts[prev_stage]) * 100
+            print(f"{prev_stage} → {curr_stage}: {dropoff:.1f}% drop")
 
-## Memory Efficiency
+# Usage
+track_funnel_event('signup_flow', 'landing', 'user1')
+track_funnel_event('signup_flow', 'signup', 'user1')
+# user2 only reaches landing
+track_funnel_event('signup_flow', 'landing', 'user2')
 
-```
-Memory comparison for different cardinalities:
-- Exact set 1,000 items: ~50KB
-- HyperLogLog 1,000 items: ~12KB
-
-- Exact set 1 million items: ~50MB
-- HyperLogLog 1 million items: ~12KB
-
-- Exact set 1 billion items: ~50GB
-- HyperLogLog 1 billion items: ~12KB
-```
-
-## Limitations
-
-- **Approximate only**: Cannot retrieve individual elements
-- **Non-reversible**: Cannot get exact members from HLL
-- **No cardinality adjustment**: Cannot reduce estimated count
-- **Merge creates new key**: PFMERGE creates new HyperLogLog
-- **No subtracting members**: Cannot remove individual elements
-
-## Advanced Patterns
-
-### Time-series Aggregation
-```redis
-// Hourly unique IPs
-PFADD ips:hour:1 ... (100 users)
-PFADD ips:hour:2 ... (120 users)
-PFADD ips:hour:3 ... (110 users)
-
-// Daily unique (union)
-PFMERGE ips:daily ips:hour:1 ips:hour:2 ... ips:hour:24
-PFCOUNT ips:daily  // Unique IPs that day
+get_funnel_metrics('signup_flow')
 ```
 
-### Multi-dimensional Tracking
-```redis
-// Track by region and country
-PFADD visits:us:2024-01-15 <user_ids>
-PFADD visits:uk:2024-01-15 <user_ids>
-PFADD visits:ca:2024-01-15 <user_ids>
+---
 
-// Regional comparison
-PFCOUNT visits:us:2024-01-15 visits:uk:2024-01-15
+## Performance
+
+```
+Operation              Time     Memory (items)
+──────────────────────────────────────────────
+PFADD                  O(1)     12KB for billions
+PFCOUNT                O(1)     Constant
+PFMERGE (N HLLs)      O(N)     12KB per HLL
+Accuracy              0.81%     Error rate (tunable)
 ```
 
-## Performance Characteristics
+**Key Stat**: 1 million unique items = ~12KB memory!
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Add element | O(1) | Constant time |
-| Get cardinality | O(1) | Fast estimation |
-| Merge | O(N) | N = number of HLLs merged |
-| Memory | O(1) | Always ~12KB |
+---
+
+## Accuracy & Error
+
+Default error rate is 0.81%, which means:
+- **1 million items**: ±8,100 error
+- **100 million items**: ±810,000 error
+- **1 billion items**: ±8.1 million error
+
+Trade-off: Memory vs Accuracy
+
+---
 
 ## Best Practices
 
-1. **Use for cardinality only**: Don't use PFADD if you need individual elements
-2. **Accept approximation**: Plan for ±0.81% error in decisions
-3. **Use separate HLLs by dimension**: Time, region, type, etc.
-4. **Monitor memory**: HLLs are small but can accumulate
-5. **Merge strategically**: Create daily/weekly summaries
-6. **Pipeline operations**: Batch PFADD calls for efficiency
-7. **Combine with other structures**: Use Sets for exact, HLL for approximate
+### 1. Use HyperLogLog for Cardinality
 
-## Common Pitfalls
+```python
+# ✅ DO: Count unique with HLL
+r.pfadd('visitors:2024', 'user1', 'user2')
+count = r.pfcount('visitors:2024')  # O(1), 12KB memory
 
-1. **Expecting exact count**: HyperLogLog gives estimates, not exact values
-2. **Subtracting cardinalities**: Cannot reliably subtract HLL estimates
-3. **Over-precision**: Don't make critical decisions on ±1% estimates
-4. **No element retrieval**: Cannot get individual members back
-5. **Assuming merge is cheap**: PFMERGE creates new key, uses memory
-6. **Too many HLLs**: Remember each HLL takes ~12KB even if empty
+# ❌ DON'T: Use set for billions of items
+r.sadd('visitors:2024', 'user1', 'user2')
+# For 1 billion items: ~40GB memory!
+```
+
+### 2. Merge Instead of Maintaining Total
+
+```python
+# ✅ DO: Merge daily HLLs for weekly
+r.pfmerge('weekly:visitors', 'day1', 'day2', 'day3')
+weekly = r.pfcount('weekly:visitors')
+
+# ❌ DON'T: Manually add daily counts
+# Doesn't account for duplicates across days!
+total = daily_count1 + daily_count2 + daily_count3
+```
+
+### 3. Set Expiration on Old HLLs
+
+```python
+# ✅ DO: Expire old data
+today = datetime.now().strftime('%Y-%m-%d')
+key = f'visitors:{today}'
+r.pfadd(key, user_id)
+r.expire(key, 30*86400)  # Keep 30 days
+```
+
+### 4. Use with Caution for Critical Numbers
+
+```python
+# ✅ DO: Understand error rate
+count = r.pfcount('visitors')  # ~0.81% error
+# For reporting/analytics: OK
+# For financial transactions: NO
+
+# Use exact count for critical operations
+exact_count = r.scard('critical:set')  # Exact but more memory
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Confusing HLL with Set
+
+```python
+# ❌ WRONG: Expecting exact deduplication
+r.pfadd('users', 'alice')
+r.pfadd('users', 'alice')
+r.pfcount('users')  # Returns ~1 (not guaranteed)
+
+# ✅ RIGHT: Use set for exact needs
+r.sadd('users', 'alice')
+r.sadd('users', 'alice')
+r.scard('users')  # Returns exactly 1
+```
+
+### Mistake 2: Not Setting Expiration
+
+```python
+# ❌ WRONG: HLL grows with old data
+r.pfadd('visitors:2020', users)
+# 4 years later: still taking memory!
+
+# ✅ RIGHT: Expire old HLLs
+r.expire('visitors:2020', 365*86400)  # 1 year TTL
+```
+
+### Mistake 3: Wrong Merge Operation
+
+```python
+# ❌ WRONG: Adding counts (ignores duplicates across HLLs)
+total = r.pfcount('day1') + r.pfcount('day2')
+# This is wrong if users appear on both days
+
+# ✅ RIGHT: Merge HLLs
+r.pfmerge('total', 'day1', 'day2')
+total = r.pfcount('total')  # Correct unique count
+```
+
+### Mistake 4: Using for Exact Small Numbers
+
+```python
+# ❌ WRONG: 10 visitors, 0.81% error = could be 9-11
+r.pfadd('visitors', users)
+count = r.pfcount('visitors')
+
+# ✅ RIGHT: Use set for small numbers
+r.sadd('visitors', users)
+count = r.scard('visitors')  # Exact
+```
+
+---
+
+## Advanced: Error Tuning
+
+For specialized cases, you can use dense or sparse mode internally (automatic), but generally use default HLL.
+
+---
+
+## Next Steps
+
+- **[Others (Bitmaps)](9-others.md)** - Bit-level operations
+- **[Streams](6-stream.md)** - Event streams with unique tracking
+- **[Sorted Sets](5-sorted-set.md)** - Cardinality by rank
+

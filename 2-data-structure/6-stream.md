@@ -1,226 +1,362 @@
-# Redis Streams
+# Redis Streams - Event Logs & Message Queues
 
 ## Overview
-Redis Streams is an append-only log data structure designed for high-throughput event streaming and message queue use cases (Redis 5.0+). Streams maintain entry sequence with automatic timestamping, similar to Apache Kafka, but with Redis simplicity.
 
-## Key Characteristics
-- **Append-only log**: New entries added sequentially, existing entries immutable
-- **Auto-timestamped**: Each entry assigned unique timestamp-based ID
-- **Ordered**: Entries maintain exact insertion order
-- **Consumer Groups**: Multiple consumers can process same stream independently
-- **Pending Entries**: Tracks unacknowledged messages per consumer
-- **Range queries**: Efficient retrieval by ID or timestamp range
+Redis Streams are append-only logs with consumer groups. Perfect for:
+- **Event Logs**: Audit trails, transaction logs
+- **Message Queues**: Distributed messaging
+- **Time-Series Data**: Sensor data, metrics
+- **Activity Feeds**: Real-time notifications
+- **Change Data Capture**: Event sourcing
 
-## Common Commands
+### Why Streams?
 
-### Adding Data
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `XADD key [ID] field value [...]` | O(1) | Append entry to stream |
-| `XLEN key` | O(1) | Get stream length |
-| `XTRIM key MAXLEN ~ count` | O(N) | Trim stream to max length |
-| `XDEL key ID [ID ...]` | O(N) | Remove entries by ID |
+- **Append-only**: Ordered by time, immutable
+- **Consumer Groups**: Distribute messages across workers
+- **Acknowledgment**: Track which messages are processed
+- **Auto-ID**: Unique IDs assigned automatically
+- **Replay**: Consume from any point in history
 
-### Reading Data
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `XRANGE key start end [COUNT]` | O(N) | Read entries by ID range |
-| `XREVRANGE key end start [COUNT]` | O(N) | Read in reverse |
-| `XREAD [BLOCK ms] STREAMS key ID` | O(N) | Read entries, optionally blocking |
-| `XLEN key` | O(1) | Get stream length |
+---
+
+## Core Commands
+
+### Add Entries
+
+```bash
+# Add entry with auto ID
+XADD mystream * field1 value1 field2 value2
+# Returns: 1234567890000-0
+
+# Add with specific ID
+XADD mystream 1000-0 field1 value1
+
+# Get stream length
+XLEN mystream
+```
+
+### Read Entries
+
+```bash
+# Read range
+XRANGE mystream - +                     # All entries
+XRANGE mystream 1000-0 2000-0          # Within ID range
+
+# Read latest
+XREVRANGE mystream + -                  # Newest first
+XREVRANGE mystream + - COUNT 10        # Last 10
+```
 
 ### Consumer Groups
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `XGROUP CREATE key group ID` | O(1) | Create consumer group |
-| `XREADGROUP GROUP group consumer [STREAMS key ID]` | O(N) | Read as group member |
-| `XACK key group ID [ID ...]` | O(N) | Acknowledge message |
-| `XPENDING key group` | O(N) | List pending messages |
-| `XCLAIM key group consumer min-idle-time ID` | O(N) | Claim pending message |
 
-## Use Cases
+```bash
+# Create consumer group
+XGROUP CREATE mystream mygroup 0        # From start
 
-### 1. Event Log & Audit Trail
-Store all application events chronologically.
+# Read as consumer
+XREADGROUP GROUP mygroup consumer1 STREAMS mystream >
 
-```redis
-// Add events
-XADD events:app * user_id 123 action "login" ip "192.168.1.1"
-XADD events:app * user_id 123 action "viewed_product" product_id 456
-XADD events:app * user_id 123 action "added_to_cart" product_id 456
-XADD events:app * user_id 123 action "checkout" total 99.99
+# Acknowledge message
+XACK mystream mygroup message-id
 
-// Read all events
-XRANGE events:app - +
-
-// Read last 10 events
-XREVRANGE events:app + - COUNT 10
-
-// Get stream length
-XLEN events:app
-
-// Read events after specific time
-XRANGE events:app (1705318200 +
+# Pending messages
+XPENDING mystream mygroup
 ```
 
-**Real-world scenario**: Event tracking, user activity logs, audit trails.
+### Trim & Delete
 
-### 2. Real-time Message Queue
-Distribute messages to multiple consumers.
+```bash
+# Trim stream (keep N recent)
+XTRIM mystream MAXLEN 1000
 
-```redis
-// Create consumer group
-XGROUP CREATE messages mygroup $
-
-// Producer adds messages
-XADD messages * type "email" to "user@example.com" subject "Welcome"
-XADD messages * type "sms" to "+1234567890" content "Hello"
-XADD messages * type "push" user_id 123 title "New notification"
-
-// Worker reads messages
-XREADGROUP GROUP mygroup worker COUNT 1 STREAMS messages >
-
-// Acknowledge processing
-XACK messages mygroup 1705318200-0
-
-// Get pending messages
-XPENDING messages mygroup
-
-// Claim abandoned message
-XCLAIM messages mygroup worker 3600000 1705318200-0
+# Delete entry
+XDEL mystream message-id
 ```
 
-**Real-world scenario**: Distributed message queues, job processing, notification systems.
+---
 
-### 3. Time-series Data Collection
-Collect measurements/metrics over time.
+## Practical Examples
 
-```redis
-// Collect temperature readings
-XADD temperature:sensor:1 * value 23.5 humidity 65 timestamp "2024-01-15T10:00:00Z"
-XADD temperature:sensor:1 * value 23.8 humidity 64 timestamp "2024-01-15T10:05:00Z"
-XADD temperature:sensor:1 * value 24.2 humidity 63 timestamp "2024-01-15T10:10:00Z"
+### Example 1: Event Log
 
-// Query readings from today
-XRANGE temperature:sensor:1 1705318200 1705404600
+```python
+import redis
+import time
 
-// Keep only last day
-XTRIM temperature:sensor:1 MAXLEN ~ 17280  // ~17280 entries per day (5min intervals)
+r = redis.Redis()
 
-// Analyze data
-XLEN temperature:sensor:1  // Total readings
+# Log event
+event = {
+    'user_id': '123',
+    'action': 'login',
+    'ip': '192.168.1.1',
+    'timestamp': str(time.time())
+}
+r.xadd('events', '*', **event)
+
+# Get recent events
+events = r.xrevrange('events', count=10)
+for event_id, event_data in events:
+    print(f"{event_id}: {event_data}")
 ```
 
-**Real-world scenario**: IoT data collection, metrics, sensor data, application monitoring.
+### Example 2: Distributed Task Queue
 
-### 4. Activity Feed (Social Media)
-Store user activities for followers to see.
+```python
+# Producer: Add tasks
+task = {
+    'type': 'send_email',
+    'user_id': '123',
+    'email': 'user@example.com'
+}
+r.xadd('tasks', '*', **task)
 
-```redis
-// User posts activity
-XADD user:123:feed * action "post" content "Great day today!" timestamp "2024-01-15T10:30:00Z"
-XADD user:123:feed * action "like" liked_post_id 456 timestamp "2024-01-15T10:35:00Z"
-XADD user:123:feed * action "follow" followed_user 789 timestamp "2024-01-15T10:40:00Z"
+# Consumer group: Multiple workers
+r.xgroup_create('tasks', 'workers', id='0', mkstream=True)
 
-// Get user's recent activities
-XREVRANGE user:123:feed + - COUNT 50
-
-// Get activities from followers
-XRANGE user:123:feed (1705318000 +
+# Worker: Process tasks
+def worker(worker_id):
+    while True:
+        messages = r.xreadgroup(
+            'workers', 
+            worker_id,
+            {'tasks': '>'},
+            count=1
+        )
+        
+        for stream_name, msg_list in messages:
+            for msg_id, data in msg_list:
+                try:
+                    process_task(data)
+                    r.xack('tasks', 'workers', msg_id)
+                except Exception as e:
+                    log.error(f"Failed: {e}")
 ```
 
-**Real-world scenario**: Social media feeds, activity streams, user timelines.
+### Example 3: Time-Series Data
 
-### 5. Distributed Work Queue with Acknowledgment
-Ensure tasks are processed exactly once.
+```python
+# Record metrics
+metrics = {
+    'cpu': '45.2',
+    'memory': '62.1',
+    'disk': '78.5'
+}
+r.xadd('metrics', '*', **metrics)
 
-```redis
-// Create group
-XGROUP CREATE tasks:queue workers 0
+# Get metrics from last hour
+one_hour_ago = int((time.time() - 3600) * 1000)
+recent_metrics = r.xrange('metrics', one_hour_ago)
 
-// Add tasks
-XADD tasks:queue * type "process_payment" order_id 12345 amount 99.99
-XADD tasks:queue * type "send_email" user_id 123 template "order_confirmation"
-
-// Worker gets tasks
-XREADGROUP GROUP workers worker COUNT 5 BLOCK 1000 STREAMS tasks:queue >
-
-// Process task...
-// Acknowledge when complete
-XACK tasks:queue workers 1705318200-0
-
-// Check pending
-XPENDING tasks:queue workers
+# Calculate averages
+cpu_values = [float(m[1][b'cpu']) for m in recent_metrics]
+avg_cpu = sum(cpu_values) / len(cpu_values)
 ```
 
-**Real-world scenario**: Distributed job processing, reliable message delivery.
+---
 
-## Advanced Patterns
+## Real-World Patterns
 
-### Consumer Group with Dead Letter Queue
-```redis
-// Create main and dead letter queues
-XGROUP CREATE events main $
-XGROUP CREATE events:dlq handlers 0
+### Pattern 1: Audit Trail
 
-// Read from main
-XREADGROUP GROUP main handler COUNT 1 STREAMS events >
+```python
+def log_action(user_id, action, details):
+    """Log user action"""
+    event = {
+        'user_id': str(user_id),
+        'action': action,
+        'details': json.dumps(details),
+        'timestamp': str(time.time())
+    }
+    r.xadd('audit:trail', '*', **event)
 
-// If processing fails, move to DLQ
-XADD events:dlq * original_id <id> reason "processing_failed"
+def get_user_activity(user_id, limit=100):
+    """Get user's recent activities"""
+    all_events = r.xrevrange('audit:trail', count=limit*10)
+    
+    user_events = [
+        (eid, data) for eid, data in all_events
+        if data[b'user_id'].decode() == str(user_id)
+    ]
+    
+    return user_events[:limit]
 ```
 
-### Stream Aggregation
-```redis
-// Multiple streams (sensors)
-XADD sensor:1 * temperature 20
-XADD sensor:2 * temperature 22
-XADD sensor:3 * temperature 21
+### Pattern 2: Consumer Groups with Retry
 
-// Read from all sensors
-XREAD STREAMS sensor:1 sensor:2 sensor:3 0 0
+```python
+def process_stream_with_retry():
+    """Process messages with retry logic"""
+    stream_key = 'orders'
+    group_name = 'processors'
+    consumer_name = f'worker-{os.getpid()}'
+    
+    # Create group if not exists
+    try:
+        r.xgroup_create(stream_key, group_name, id='0', mkstream=True)
+    except redis.ResponseError:
+        pass  # Group already exists
+    
+    while True:
+        # Get pending messages first (failed previously)
+        pending = r.xpending(stream_key, group_name)
+        
+        if pending['pending'] > 0:
+            # Retry failed messages
+            messages = r.xclaim(
+                stream_key,
+                group_name,
+                consumer_name,
+                min_idle_time=60000,  # 1 minute
+                count=10
+            )
+        else:
+            # Get new messages
+            messages = r.xreadgroup(
+                group_name,
+                consumer_name,
+                {stream_key: '>'},
+                count=10
+            )
+        
+        for stream, msg_list in messages:
+            for msg_id, data in msg_list:
+                try:
+                    process_order(data)
+                    r.xack(stream_key, group_name, msg_id)
+                except Exception as e:
+                    log.error(f"Failed {msg_id}: {e}")
 ```
 
-## Performance Characteristics
+---
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Add entry | O(1) | Append operation |
-| Read range | O(N) | N = entries returned |
-| Stream length | O(1) | Cached length |
-| Trim | O(N) | N = entries removed |
-| Group operations | O(N) | Varies by operation |
+## Performance
 
-## Memory Considerations
+```
+Operation              Time         Memory
+──────────────────────────────────────────
+XADD                  O(1)         30 bytes per entry
+XREAD                 O(N)         Returns N entries
+XRANGE                O(log N + N) For N entries
+XLEN                  O(1)         Constant
+XDEL                  O(N)         For N entries
+```
 
-- Stream entries consume ~100-200 bytes minimum
-- Consumer groups add ~50-100 bytes per entry per group
-- Pending entries tracked separately (~50 bytes each)
-- Consider XTRIM for unbounded streams
-
-## Limitations
-
-- **No deduplication**: Duplicate entries allowed, deduplicate in application
-- **No sharding**: Single stream on one node
-- **Immutable entries**: Cannot modify, only delete
-- **ID constraints**: Can't backdate entries (timestamp-based IDs)
-- **Consumer group state**: Stored in memory, lost on restart
+---
 
 ## Best Practices
 
-1. **Set max stream length**: Use XTRIM to prevent unbounded growth
-2. **Use consumer groups**: For reliable, distributed processing
-3. **Handle pending entries**: Monitor with XPENDING, reclaim with XCLAIM
-4. **Autoincrement IDs**: Use * in XADD for automatic ID generation
-5. **Batch reads**: Use COUNT to limit entries per read
-6. **Set appropriate block time**: Balance latency vs CPU usage
-7. **Monitor group lag**: Track difference between latest ID and consumer position
+### 1. Use Consumer Groups for Distributed Processing
 
-## Common Pitfalls
+```python
+# ✅ DO: Consumer groups for distribution
+r.xgroup_create('tasks', 'workers', id='0', mkstream=True)
+messages = r.xreadgroup('workers', worker_id, {'tasks': '>'})
 
-1. **Unbounded streams**: Forgetting XTRIM causes memory issues
-2. **Consumer lag**: Not reading fast enough from long streams
-3. **Unacknowledged messages**: Pending entries pile up, causing memory issues
-4. **Blocking indefinitely**: XREAD BLOCK 0 can cause hanging
-5. **Lost consumer state**: Consumer groups don't persist across restart
-6. **Wrong ID format**: Entry IDs must be timestamp-based format
+# ❌ DON'T: Manual consumer tracking
+tasks = r.xread({'tasks': last_id}, count=10)
+# No automatic load balancing!
+```
+
+### 2. Acknowledge Processed Messages
+
+```python
+# ✅ DO: ACK after successful processing
+try:
+    process(data)
+    r.xack(stream, group, msg_id)
+except Exception:
+    # Don't ACK - will be retried
+    pass
+
+# ❌ DON'T: ACK before processing
+r.xack(stream, group, msg_id)
+process(data)  # If fails here, message is lost!
+```
+
+### 3. Monitor Pending Messages
+
+```python
+# ✅ DO: Check for stuck messages
+pending = r.xpending(stream, group)
+if pending['pending'] > 100:
+    alert("Too many pending messages!")
+
+# Reclaim stuck messages
+r.xclaim(stream, group, consumer, min_idle_time=3600000)
+```
+
+### 4. Trim Streams Periodically
+
+```python
+# ✅ DO: Keep streams bounded
+# Run daily cleanup
+r.xtrim('events', maxlen=1000000)
+
+# ✅ DO: Archive old entries
+old_events = r.xrange('events', count=10000)
+save_to_database(old_events)
+r.xtrim('events', maxlen=100000)
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: No Consumer Group Management
+
+```python
+# ❌ WRONG: No acknowledgment tracking
+entry = r.xread({'stream': last_id}, count=1)
+process(entry)  # If crashes, message might be lost
+
+# ✅ RIGHT: Use consumer groups
+r.xreadgroup(group, consumer, {'stream': '>'})
+# Automatic tracking, can retry if needed
+```
+
+### Mistake 2: Unbounded Stream Growth
+
+```python
+# ❌ WRONG: Never trimmed
+r.xadd('events', '*', ...)
+# After years: billion entries!
+
+# ✅ RIGHT: Trim regularly
+r.xtrim('events', maxlen=1000000)  # Keep 1M latest
+```
+
+### Mistake 3: No Error Handling
+
+```python
+# ❌ WRONG: ACK before processing
+r.xack(stream, group, msg_id)
+process(data)
+# If process fails, message is already ACKed!
+
+# ✅ RIGHT: ACK after success
+process(data)
+r.xack(stream, group, msg_id)
+```
+
+### Mistake 4: Ignoring Consumer Lag
+
+```python
+# ❌ WRONG: Don't monitor lag
+# No visibility into processing speed
+
+# ✅ RIGHT: Monitor consumer group info
+info = r.xinfo_groups(stream)
+for group in info:
+    print(f"Pending: {group['pending']}")
+    print(f"Consumers: {group['consumers']}")
+```
+
+---
+
+## Next Steps
+
+- **[Sorted Sets](5-sorted-set.md)** - Rankings
+- **[Hashes](4-hashes.md)** - Objects
+- Advanced: Lua scripts with Streams, consumer group patterns
+

@@ -1,197 +1,470 @@
-# Redis Lists
+# Redis Lists - Ordered Collections & Queues
+
+## Table of Contents
+1. [Overview](#overview)
+2. [List Fundamentals](#list-fundamentals)
+3. [Core Commands](#core-commands)
+4. [Practical Examples](#practical-examples)
+5. [Real-World Patterns](#real-world-patterns)
+6. [Performance Optimization](#performance-optimization)
+7. [Best Practices](#best-practices)
+8. [Common Mistakes](#common-mistakes)
+
+---
 
 ## Overview
-Redis Lists are ordered collections of strings, allowing you to store and manipulate sequences of data efficiently. They maintain insertion order and support operations from both ends with O(1) time complexity.
 
-## Key Characteristics
-- **Ordered**: Elements maintain insertion order (FIFO or LIFO patterns)
-- **Duplicates Allowed**: Same value can appear multiple times
-- **Index-based**: Access elements by position (0-indexed)
-- **Range Operations**: Retrieve multiple elements in one command
-- **Bidirectional**: Efficient operations from both head and tail
-- **Blocking Operations**: Support waiting for elements with timeouts
+Redis Lists are ordered collections of strings, implemented as doubly-linked lists. Perfect for:
+- **Task Queues**: Job processing, message queues
+- **Stacks**: Undo/redo functionality
+- **Activity Feeds**: User timelines, notifications
+- **Sliding Windows**: Recent N items, rate limiting
+- **Blocking Operations**: Producer-consumer patterns
 
-## Common Commands
+### Why Lists?
 
-### Adding Elements
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `LPUSH key value [...]` | O(1) | Add to left (head) |
-| `RPUSH key value [...]` | O(1) | Add to right (tail) |
-| `LINSERT key BEFORE\|AFTER pivot value` | O(N) | Insert relative to pivot |
-| `LPUSHX key value` | O(1) | Add only if key exists |
-| `RPUSHX key value` | O(1) | Add to tail only if exists |
+- **O(1) operations** at both ends (LPUSH, RPUSH, LPOP, RPOP)
+- **O(N) access** in middle (but mostly we work at ends)
+- **Atomic operations** on sequences
+- **Blocking capabilities** for real-time patterns
+- **Memory efficient**: ~7 bytes per element
 
-### Removing Elements
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `LPOP key [count]` | O(N) | Remove and return left elements |
-| `RPOP key [count]` | O(N) | Remove and return right elements |
-| `LREM key count value` | O(N) | Remove occurrences of value |
-| `LTRIM key start stop` | O(N) | Keep only elements in range |
-| `BLPOP key timeout` | O(1) | Blocking left pop |
-| `BRPOP key timeout` | O(1) | Blocking right pop |
+---
 
-### Retrieving Elements
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `LLEN key` | O(1) | Get list length |
-| `LINDEX key index` | O(N) | Get element at index |
-| `LRANGE key start stop` | O(N) | Get range of elements |
-| `LPOS key element` | O(N) | Find position of element |
-| `LMOVE source dest LEFT\|RIGHT LEFT\|RIGHT` | O(1) | Move element between lists |
+## List Fundamentals
 
-### Modifying Elements
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `LSET key index value` | O(N) | Set element at index |
+### How Lists Work
 
-## Use Cases
-
-### 1. Message Queues (FIFO Pattern)
-Process tasks in the order they arrive. Perfect for job processing systems.
-
-```redis
-// Producer
-RPUSH task:queue "task:1" "task:2" "task:3"
-
-// Consumer
-LPOP task:queue  // Returns "task:1"
+```
+RPUSH mylist a b c
+HEAD                        TAIL
+[a] <-> [b] <-> [c]
 ```
 
-**Real-world scenario**: Process payment transactions in sequence.
+Lists are doubly-linked lists with optimizations for fast end operations.
 
-### 2. Activity Feeds & Notifications
-Maintain reverse chronological order of user activities.
+### Core Properties
 
-```redis
-// Add activity
-LPUSH user:123:feed "user_liked_post_456:2024-01-15T10:30:00Z"
-LPUSH user:123:feed "user_commented_789:2024-01-15T09:45:00Z"
+- **Ordered**: Insertion order preserved
+- **Duplicates allowed**: Same value can appear multiple times
+- **Bi-directional**: Fast operations from both ends
+- **Index-based**: Can access by position (slow in middle)
 
-// Get latest 10 activities
-LRANGE user:123:feed 0 9
+---
 
-// Remove old entries
-LTRIM user:123:feed 0 99  // Keep only last 100
+## Core Commands
+
+### Push Operations
+
+```bash
+# Push to right (append)
+RPUSH queue "task1" "task2"    # Returns: 2
+
+# Push to left (prepend)
+LPUSH queue "urgent"            # Returns: 3
+
+# Push only if exists
+RPUSHX queue "task3"            # Succeeds if key exists
 ```
 
-**Real-world scenario**: Social media feed, news aggregation.
+### Pop Operations
 
-### 3. Undo/Redo Stack
-Implement action history for undo operations.
+```bash
+# Pop from left (FIFO)
+LPOP queue                      # Returns: "urgent"
 
-```redis
-// Store actions
-LPUSH user:123:undo "action:bold_text"
-LPUSH user:123:undo "action:italic_text"
-LPUSH user:123:undo "action:font_change"
+# Pop from right (LIFO)
+RPOP queue                      # Returns: "task2"
 
-// Undo last action
-LPOP user:123:undo  // Returns "action:font_change"
-
-// Redo stack
-RPUSH user:123:redo "action:font_change"
+# Pop with count (Redis 6.2+)
+LPOP queue 2                    # Returns: ["task1", ...]
 ```
 
-**Real-world scenario**: Text editors, graphic design software.
+### Blocking Operations
 
-### 4. Rate Limiting with Sliding Window
-Track requests in a time window to enforce rate limits.
+```bash
+# Block until element available
+BLPOP queue 5                   # Wait 5 seconds
+BLPOP queue 0                   # Wait forever
 
-```redis
-// Log request timestamp
-LPUSH user:123:requests:sliding 1705318200
-LPUSH user:123:requests:sliding 1705318205
-
-// Remove requests older than 60 seconds
-LREM user:123:requests:sliding 0 1705317000
-
-// Count requests
-LLEN user:123:requests:sliding
+# Block on multiple queues
+BLPOP queue1 queue2 queue3 10   # Returns [queue, value]
 ```
 
-### 5. Redis-based Pub/Sub Alternative
-Use blocking operations for simple message distribution.
+### Range & Access
 
-```redis
-// Worker waits for jobs
-BRPOP job:queue 0  // Blocks indefinitely
+```bash
+# Get range
+LRANGE queue 0 -1               # All elements
+LRANGE queue 0 2                # First 3 elements
 
-// Producer adds jobs
-LPUSH job:queue "{\"type\":\"email\",\"to\":\"user@example.com\"}"
+# Get element at index
+LINDEX queue 2                  # Third element
+
+# Get length
+LLEN queue                      # Number of elements
 ```
 
-### 6. Leaderboard Tracking
-Maintain recent top performers.
+### Modify Operations
 
-```redis
-// Add scores
-RPUSH leaderboard:today "player1:1500"
-RPUSH leaderboard:today "player2:1200"
-RPUSH leaderboard:today "player3:1800"
+```bash
+# Set element at index
+LSET queue 2 "new_value"
 
-// Keep only top 100
-LTRIM leaderboard:today 0 99
+# Insert before/after
+LINSERT queue BEFORE "task1" "before"
+LINSERT queue AFTER "task1" "after"
+
+# Remove elements
+LREM queue 2 "value"            # Remove first 2 occurrences
+
+# Trim (keep only range)
+LTRIM queue 0 10                # Keep first 11, remove rest
 ```
 
-## Performance Characteristics
+### Search
 
-| Operation | Complexity | Note |
-|-----------|-----------|------|
-| Head/Tail operations | O(1) | LPUSH, RPUSH, LPOP, RPOP |
-| Middle access | O(N) | Requires scanning |
-| Range operations | O(S+N) | S = start offset, N = returned elements |
-| List length | O(1) | Stored separately, very fast |
-| Blocking operations | O(1) | Efficient internal implementation |
-
-## Advanced Patterns
-
-### Work Queue Pattern
-```redis
-// Producer: Add work
-RPUSH queue:pending {job_data}
-
-// Consumer: Get and process
-BRPOPLPUSH queue:pending queue:processing 0
-// Process...
-LREM queue:processing 1 {job_data}
+```bash
+# Find position (Redis 6.0.6+)
+LPOS queue "value"              # First occurrence
+LPOS queue "value" COUNT 3      # First 3 occurrences
 ```
 
-### Atomic List Movement
-```redis
-// Move from source to destination atomically
-RPOPLPUSH source_list dest_list
-BRPOPLPUSH source_list dest_list 0  // Blocking version
+---
+
+## Practical Examples
+
+### Example 1: Task Queue
+
+```python
+import redis
+r = redis.Redis()
+
+# Producer: Add tasks
+r.rpush('task:queue', 'send_email', 'process_payment')
+
+# Worker: Consume tasks
+task = r.lpop('task:queue')
+if task:
+    print(f"Processing: {task}")
+    process(task)
 ```
 
-### List as Cache
-```redis
-// Store results
-RPUSH cache:recent "result1"
-RPUSH cache:recent "result2"
+### Example 2: Activity Feed
 
-// Keep only N items (LRU-like)
-LTRIM cache:recent 0 999  // Keep last 1000
+```python
+# Add new activity (newest first)
+r.lpush('feed:user:123', 'user456 liked your post')
+r.lpush('feed:user:123', 'user789 commented')
+
+# Get recent 10
+activities = r.lrange('feed:user:123', 0, 9)
+
+# Keep only last 1000
+r.ltrim('feed:user:123', 0, 999)
 ```
 
-## Limitations & Considerations
+### Example 3: Blocking Queue
 
-- **Random Access**: Middle element access is O(N), use Sorted Sets for indexed access
-- **Memory Usage**: Large lists consume significant memory, consider compression
-- **No Sorting**: Built-in order is insertion order only, use Sorted Sets for scoring
-- **Timeout Precision**: Blocking operations use second precision
-- **Single-thread**: Blocking operations block the entire connection
+```python
+# Producer
+r.rpush('orders', 'order:1', 'order:2')
 
-## Memory Optimization Tips
+# Consumer - waits for orders
+while True:
+    result = r.blpop('orders', timeout=60)
+    if result:
+        queue_name, order = result
+        process_order(order)
+    else:
+        print("No orders received")
+```
 
-1. Use `LPOP key count` to batch pop operations
-2. Implement `LTRIM` regularly to limit list size
-3. Consider compression for large values
-4. Use pipelining to batch commands
+### Example 4: Undo/Redo
 
-## Common Pitfalls
+```python
+# User makes change
+r.lpush('undo:user:123', 'delete item 5')
+r.lpush('undo:user:123', 'edit item 3')
 
-1. **Blocking all consumers**: If all workers block on same key, they'll all wake on one message
-2. **Memory leaks**: Forgotten `LTRIM` operations can lead to unbounded list growth
-3. **Order assumptions**: Remember lists preserve insertion order, not value order
+# Undo
+action = r.lpop('undo:user:123')  # 'edit item 3'
+r.lpush('redo:user:123', action)
+
+# Redo
+action = r.lpop('redo:user:123')
+r.lpush('undo:user:123', action)
+```
+
+---
+
+## Real-World Patterns
+
+### Pattern 1: Rate Limiting with Sliding Window
+
+```python
+def is_rate_limited(user_id, max_requests=100, window=60):
+    key = f'ratelimit:{user_id}'
+    now = time.time()
+    
+    # Remove old entries
+    r.zremrangebyscore(key, 0, now - window)
+    
+    # Check count
+    count = r.zcard(key)
+    if count < max_requests:
+        r.zadd(key, {str(now): now})
+        return False
+    return True
+```
+
+### Pattern 2: Task Processing with Retry
+
+```python
+def process_queue_with_retry():
+    while True:
+        # Get task
+        task = r.blpop('task:queue', timeout=10)
+        if not task:
+            continue
+        
+        task_data = json.loads(task[1])
+        try:
+            process(task_data)
+        except Exception as e:
+            retries = r.hincrby(f'task:{task_data["id"]}', 'retries', 1)
+            if retries < 3:
+                r.rpush('task:queue', task[1])
+            else:
+                r.lpush('task:queue:failed', task[1])
+```
+
+### Pattern 3: Distributed Task Queue
+
+```python
+# Multiple workers
+for worker_id in range(5):
+    worker = Worker(worker_id)
+    worker.start()
+
+class Worker:
+    def __init__(self, worker_id):
+        self.worker_id = worker_id
+    
+    def start(self):
+        while True:
+            # Each worker gets next task
+            result = r.blpop('shared:queue', timeout=10)
+            if result:
+                self.process(result[1])
+```
+
+---
+
+## Performance Optimization
+
+### Operations Performance
+
+```
+Operation       Time      Memory  Notes
+─────────────────────────────────────
+LPUSH/RPUSH     O(1)      7 bytes per element
+LPOP/RPOP       O(1)      Constant
+LLEN            O(1)      Minimal
+LINDEX (end)    O(1)      Constant
+LINDEX (middle) O(N)      Linear scan
+LRANGE          O(N)      Returns N elements
+LTRIM           O(N)      Deletes elements
+```
+
+### Optimization Tips
+
+#### Use Blocking Operations Instead of Polling
+
+```python
+# ❌ BAD: Polling with sleep
+while True:
+    task = r.lpop('queue')
+    if task:
+        process(task)
+    else:
+        time.sleep(0.1)  # Wastes CPU
+
+# ✅ GOOD: Blocking
+task = r.blpop('queue', timeout=10)
+if task:
+    process(task[1])
+```
+
+#### Batch with Pipelining
+
+```python
+# ❌ BAD: Individual pushes
+for task in tasks:
+    r.rpush('queue', task)
+
+# ✅ GOOD: Pipeline
+pipe = r.pipeline()
+for task in tasks:
+    pipe.rpush('queue', task)
+pipe.execute()
+```
+
+#### Trim Regularly
+
+```python
+# ✅ Keep manageable size
+def maintain_feed(user_id):
+    r.ltrim(f'feed:{user_id}', 0, 999)  # Keep 1000 items
+
+# Run daily
+schedule.every().day.do(maintain_all_feeds)
+```
+
+---
+
+## Best Practices
+
+### 1. Use Blocking Operations
+
+```python
+# ✅ DO: Efficient waiting
+result = r.blpop(['queue1', 'queue2'], timeout=30)
+
+# ❌ DON'T: Busy polling
+while True:
+    if r.llen('queue1') > 0:
+        process(r.lpop('queue1'))
+```
+
+### 2. Handle Timeouts Properly
+
+```python
+# ✅ DO: Check timeout result
+result = r.blpop('queue', timeout=5)
+if result:
+    process(result[1])
+else:
+    # Timeout - queue was empty
+    log.warning("Queue empty")
+```
+
+### 3. Implement Retry Logic
+
+```python
+# ✅ DO: Failed tasks to DLQ
+try:
+    process(task)
+except Exception:
+    # Track retries
+    retries = r.hincrby(f'task:{id}', 'retries', 1)
+    if retries < 3:
+        r.rpush('queue', task)  # Retry
+    else:
+        r.lpush('queue:failed', task)  # Give up
+```
+
+### 4. Monitor Queue Size
+
+```bash
+# ✅ DO: Watch queue backlog
+LLEN task:queue     # Current size
+
+# Alert if queue > 1000 items
+if LLEN > 1000:
+    alert_ops()
+```
+
+### 5. Set Consistent Naming
+
+```
+✅ GOOD PATTERNS:
+task:queue
+task:queue:failed
+user:123:feed
+notifications:user:456
+undo:user:789
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Accessing Middle of Large List
+
+```python
+# ❌ WRONG: O(N) operation on large list
+r.lrange('huge_list', 0, -1)
+middle = list_data[500000]
+
+# ✅ RIGHT: Use smaller ranges or pagination
+first_100 = r.lrange('list', 0, 99)
+```
+
+### Mistake 2: Not Handling Timeout
+
+```python
+# ❌ WRONG: Ignores timeout
+r.blpop('queue', 0)  # Waits forever
+
+# ✅ RIGHT: Reasonable timeout
+result = r.blpop('queue', timeout=60)
+if not result:
+    backoff()
+```
+
+### Mistake 3: Unbounded List Growth
+
+```python
+# ❌ WRONG: Never trimmed
+r.rpush('feed:user', item)
+# After years: millions of items!
+
+# ✅ RIGHT: Maintain size
+r.rpush('feed:user', item)
+r.ltrim('feed:user', 0, 999)  # Keep 1000
+```
+
+### Mistake 4: Non-Atomic Multi-Operations
+
+```python
+# ❌ WRONG: Not atomic
+task = r.lpop('queue')
+r.lpush('processing', task)  # Gap between operations
+
+# ✅ RIGHT: Use atomic operations or WATCH
+pipe = r.pipeline()
+pipe.lpop('queue')
+pipe.lpush('processing', task)
+pipe.execute()
+```
+
+### Mistake 5: Wrong Operation Direction
+
+```python
+# ❌ WRONG: FIFO becomes LIFO
+r.lpush('queue', 'task1')
+r.lpush('queue', 'task2')
+r.rpop('queue')  # Gets task1, not task2!
+
+# ✅ RIGHT: Consistent direction
+r.rpush('queue', 'task1')
+r.rpush('queue', 'task2')
+r.lpop('queue')  # Gets task1 (FIFO)
+```
+
+---
+
+## Next Steps
+
+Explore other data structures:
+- **[Sets](3-sets.md)** - Unique collections
+- **[Hashes](4-hashes.md)** - Objects and profiles
+- **[Sorted Sets](5-sorted-set.md)** - Rankings and leaderboards
+
+Then build:
+- Advanced queue systems (priority queue, DLQ)
+- Real-time notifications
+- Task processing frameworks
+- Rate limiting systems
+

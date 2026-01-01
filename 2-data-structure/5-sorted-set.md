@@ -1,278 +1,336 @@
-# Redis Sorted Sets
+# Redis Sorted Sets - Rankings & Leaderboards
 
 ## Overview
-Sorted Sets (ZSets) combine properties of Sets and Hashes. Each unique member is associated with a floating-point score used for ordering. This structure enables efficient ranking, leaderboards, and priority-based queries.
 
-## Key Characteristics
-- **Unique Members**: No duplicate elements (like Sets)
-- **Scored**: Each member has a floating-point score (-inf to +inf)
-- **Ordered**: Members automatically sorted by score (low to high)
-- **Efficient Ranking**: O(log N) for most operations
-- **Range Queries**: Efficient score-based and index-based ranges
-- **Skip List Implementation**: Optimized for both random access and range operations
+Sorted Sets are collections of unique members with associated scores, ordered by score. Perfect for:
+- **Leaderboards**: Game rankings, scores
+- **Priority Queues**: Tasks with priorities
+- **Time-based Sorting**: Recent posts, trending topics
+- **Rate Limiting**: Request rates per user
+- **Metrics**: Percentiles, histogram data
 
-## Common Commands
+### Why Sorted Sets?
 
-### Adding & Removing
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `ZADD key score member [score member ...]` | O(N log M) | Add members with scores |
-| `ZREM key member [member ...]` | O(N log M) | Remove members |
-| `ZPOPMIN key [count]` | O(N log M) | Remove lowest scored members |
-| `ZPOPMAX key [count]` | O(N log M) | Remove highest scored members |
-| `BZPOPMIN key timeout` | O(N log M) | Blocking pop min |
-| `BZPOPMAX key timeout` | O(N log M) | Blocking pop max |
+- **O(log N) operations**: ZADD, ZREM, ZSCORE all logarithmic
+- **Ordered by score**: Automatic sorting
+- **Range queries**: Get top N items efficiently
+- **Atomic operations**: Update score and position together
+- **Rich queries**: Rank, range, score operations
 
-### Querying by Index
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `ZRANGE key start stop [WITHSCORES]` | O(N) | Get members by index (low to high) |
-| `ZREVRANGE key start stop [WITHSCORES]` | O(N) | Get members by index (high to low) |
-| `ZCARD key` | O(1) | Count total members |
-| `ZRANK key member` | O(log M) | Get rank (0-indexed, low to high) |
-| `ZREVRANK key member` | O(log M) | Get rank (high to low) |
+---
 
-### Querying by Score
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `ZRANGEBYSCORE key min max [LIMIT]` | O(N log M) | Get members in score range |
-| `ZREVRANGEBYSCORE key max min [LIMIT]` | O(N log M) | Reverse score range |
-| `ZCOUNT key min max` | O(log M) | Count members in score range |
-| `ZSCORE key member` | O(1) | Get member's score |
-| `ZMSCORE key member [member ...]` | O(N) | Get multiple scores |
+## Core Commands
 
-### Score Operations
-| Command | Complexity | Description |
-|---------|-----------|-------------|
-| `ZINCRBY key increment member` | O(log M) | Increment member's score |
-| `ZINTERSTORE dest [weights]` | O(N*K log M) | Store intersection |
-| `ZUNIONSTORE dest [weights]` | O(N+M log M) | Store union |
+### Add & Update
 
-## Use Cases
+```bash
+# Add members with scores
+ZADD leaderboard 100 "alice" 95 "bob" 110 "charlie"
 
-### 1. Leaderboards & Rankings
-Track user scores with efficient rank queries.
+# Update score (same syntax)
+ZADD leaderboard 105 "alice"
 
-```redis
-// Add player scores
-ZADD leaderboard 1500 alice
-ZADD leaderboard 1200 bob
-ZADD leaderboard 1800 charlie
-ZADD leaderboard 1300 diana
-
-// Get top 10 players
-ZREVRANGE leaderboard 0 9 WITHSCORES  // High to low
-
-// Get bottom 10
-ZRANGE leaderboard 0 9 WITHSCORES  // Low to high
-
-// Get player rank (1-indexed)
-ZREVRANK leaderboard alice  // Returns: 2 (2nd place)
-
-// Get player score
-ZSCORE leaderboard alice  // Returns: 1500
-
-// Update score after game
-ZINCRBY leaderboard 150 bob  // Bob scores 150 points
-
-// Get players in score range
-ZCOUNT leaderboard 1500 2000  // Count players with score 1500-2000
-
-// Get all with scores
-ZRANGEBYSCORE leaderboard 1500 2000 WITHSCORES
+# Add only if doesn't exist
+ZADD leaderboard NX 110 "david"
 ```
 
-**Real-world scenario**: Game leaderboards, sports rankings, rating systems.
+### Get & Query
 
-### 2. Time-based Queues (Priority by Timestamp)
-Use timestamp as score for time-ordered processing.
+```bash
+# Get score of member
+ZSCORE leaderboard "alice"                  # 105
 
-```redis
-// Add tasks with timestamp
-ZADD task:queue 1705318200 "task:process_payment"
-ZADD task:queue 1705318500 "task:send_email"
-ZADD task:queue 1705317900 "task:generate_report"
+# Get rank (0-indexed, ascending)
+ZRANK leaderboard "alice"                   # Position from lowest
 
-// Get oldest tasks (process in order)
-ZRANGE task:queue 0 -1 WITHSCORES
+# Get rank (descending - for leaderboards)
+ZREVRANK leaderboard "alice"                # Position from highest
 
-// Get next task to process
-ZRANGE task:queue 0 0  // Get first item
-
-// Get tasks within time range
-ZRANGEBYSCORE task:queue 1705317000 1705320000
-
-// Process and remove task
-ZPOPMIN task:queue  // Get and remove oldest
+# Get count
+ZCARD leaderboard                           # Total members
 ```
 
-**Real-world scenario**: Job queues, scheduled tasks, event processing.
+### Range Operations
 
-### 3. Rate Limiting (Sliding Window)
-Track requests using timestamp as score.
+```bash
+# Get range by rank
+ZRANGE leaderboard 0 2                      # Top 3 (lowest)
+ZREVRANGE leaderboard 0 2                   # Top 3 (highest)
 
-```redis
-// Log requests
-ZADD rate:user:123 1705318200 "req:1"
-ZADD rate:user:123 1705318205 "req:2"
-ZADD rate:user:123 1705318210 "req:3"
+# Get with scores
+ZREVRANGE leaderboard 0 9 WITHSCORES        # Top 10 with scores
 
-// Remove old requests (older than 60 seconds)
-current_time = 1705318270
-ZREMRANGEBYSCORE rate:user:123 0 (current_time - 60)
-
-// Count requests in window
-ZCARD rate:user:123  // Requests in last 60 seconds
-
-// Check if rate limited
-if ZCARD rate:user:123 > 10:
-  # Rate limit exceeded
+# Get by score range
+ZRANGEBYSCORE leaderboard 100 110           # All with score 100-110
+ZREVRANGEBYSCORE leaderboard 110 100        # Same, descending
 ```
 
-**Real-world scenario**: API rate limiting, DDoS protection, activity throttling.
+### Increment
 
-### 4. Range Queries (Score-based Filtering)
-Find items within numeric ranges.
-
-```redis
-// Store products with price as score
-ZADD prices:laptop 799.99 "dell:xps"
-ZADD prices:laptop 999.99 "apple:macbook"
-ZADD prices:laptop 1299.99 "premium:thinkpad"
-ZADD prices:laptop 599.99 "budget:asus"
-
-// Find laptops in price range
-ZRANGEBYSCORE prices:laptop 600 1000
-
-// Count in range
-ZCOUNT prices:laptop 600 1000
-
-// Get highest priced
-ZREVRANGE prices:laptop 0 0 WITHSCORES
-
-// Get lowest priced
-ZRANGE prices:laptop 0 0 WITHSCORES
+```bash
+# Increment score
+ZINCRBY leaderboard 5 "alice"               # Add 5 to alice's score
 ```
 
-**Real-world scenario**: Product filtering, range-based search, price comparison.
+### Remove
 
-### 5. Trending/Popularity Scoring
-Track popularity metrics efficiently.
+```bash
+# Remove member
+ZREM leaderboard "bob"
 
-```redis
-// Articles with view count as score
-ZADD trending:articles 1500 "article:redis-guide"
-ZADD trending:articles 3200 "article:python-tips"
-ZADD trending:articles 900 "article:database-design"
+# Remove by rank
+ZREMRANGEBYRANK leaderboard 0 2             # Remove bottom 3
 
-// Get trending articles
-ZREVRANGE trending:articles 0 9 WITHSCORES  // Top 10
-
-// Increment views
-ZINCRBY trending:articles 50 "article:redis-guide"
-
-// Get articles with high engagement
-ZCOUNT trending:articles 2000 10000
+# Remove by score
+ZREMRANGEBYSCORE leaderboard 0 50           # Remove score 0-50
 ```
 
-**Real-world scenario**: Trending content, popularity rankings, engagement metrics.
+---
 
-### 6. Autocomplete (Lexicographic Ordering)
-Use same score for lexicographic sorting.
+## Practical Examples
 
-```redis
-// Store with same score for alphabetical order
-ZADD autocomplete:users 0 "alice"
-ZADD autocomplete:users 0 "alice_johnson"
-ZADD autocomplete:users 0 "alice_smith"
-ZADD autocomplete:users 0 "bob"
+### Example 1: Game Leaderboard
 
-// Get items lexicographically
-ZRANGEBYLEX autocomplete:users "[a" "[c"
+```python
+import redis
+r = redis.Redis()
 
-// Prefix match
-ZCOUNTBYLEX autocomplete:users "[alice" "[alice_z"
+# Update scores
+r.zadd('game:leaderboard', {'alice': 1000, 'bob': 950})
+
+# New score
+r.zincrby('game:leaderboard', 50, 'alice')  # alice now has 1050
+
+# Get top 10
+top_10 = r.zrevrange('game:leaderboard', 0, 9, withscores=True)
+for player, score in top_10:
+    print(f"{player}: {score}")
+
+# Get player's rank
+rank = r.zrevrank('game:leaderboard', 'alice')
+score = r.zscore('game:leaderboard', 'alice')
+print(f"Rank: {rank}, Score: {score}")
 ```
 
-### 7. Geographic Proximity (Distance as Score)
-Store distances as scores for sorted access.
+### Example 2: Recent Posts
 
-```redis
-// Store nearby restaurants (distance in meters as score)
-ZADD restaurants:nearby 250 "burger_king:main"
-ZADD restaurants:nearby 450 "mcdonalds:central"
-ZADD restaurants:nearby 180 "subway:downtown"
-ZADD restaurants:nearby 600 "kfc:airport"
+```python
+import time
 
-// Find closest restaurants
-ZRANGE restaurants:nearby 0 4 WITHSCORES
+# Add post (score = timestamp)
+now = time.time()
+r.zadd('posts:recent', {'post:123': now})
+r.zadd('posts:recent', {'post:456': now + 1})
 
-// Get restaurants within 500m
-ZRANGEBYSCORE restaurants:nearby 0 500
+# Get 10 most recent
+recent = r.zrevrange('posts:recent', 0, 9)
+for post_id in recent:
+    post = r.hgetall(post_id)
+    print(post)
 ```
 
-## Advanced Patterns
+### Example 3: Priority Queue
 
-### Intersection with Weights
-```redis
-// Find users common to multiple interests with weighted scores
-ZINTERSTORE result 2 interests:tech interests:startup WEIGHTS 2 1
-// Users interested in both tech AND startups, weighted 2:1
+```python
+# Add tasks with priority
+r.zadd('task:queue', {
+    'send_email:1': 10,  # Priority 10
+    'process_payment:1': 5,  # Priority 5
+    'notify:1': 20  # Priority 20
+})
+
+# Get highest priority task
+task = r.zrevrange('task:queue', 0, 0)
+if task:
+    r.zrem('task:queue', task[0])
+    process(task[0])
 ```
 
-### Union for Aggregation
-```redis
-// Combine scores from multiple sources
-ZUNIONSTORE aggregate 2 user:views user:engagement WEIGHTS 0.3 0.7
-// Combined score = views*0.3 + engagement*0.7
+### Example 4: Rate Limiting by Score
+
+```python
+import time
+
+def check_rate_limit(user_id, max_requests=100, window=60):
+    """Check if user exceeded limit"""
+    key = f'ratelimit:{user_id}'
+    now = time.time()
+    window_start = now - window
+    
+    # Remove old entries
+    r.zremrangebyscore(key, 0, window_start)
+    
+    # Count recent
+    count = r.zcard(key)
+    
+    if count < max_requests:
+        r.zadd(key, {str(now): now})
+        r.expire(key, window + 1)
+        return True
+    return False
 ```
 
-### Blocking Operations for Workers
-```redis
-// Wait for next task
-BZPOPMIN task:queue 0  // Blocks until task available
+---
+
+## Real-World Patterns
+
+### Pattern 1: Trending Topics
+
+```python
+def increment_topic_score(topic, count=1):
+    """Increment topic score (popularity)"""
+    r.zincrby('trending:topics', count, topic)
+
+def get_trending(limit=10):
+    """Get trending topics"""
+    return r.zrevrange('trending:topics', 0, limit-1, withscores=True)
+
+# Usage
+increment_topic_score('python')  # Someone mentioned Python
+trending = get_trending()
 ```
 
-## Performance Characteristics
+### Pattern 2: Percentile Ranking
 
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| Add member | O(log M) | M = number of members |
-| Remove member | O(log M) | |
-| Get by rank | O(log M + N) | N = elements returned |
-| Get by score | O(log M + N) | N = elements in range |
-| Get score | O(1) | Direct lookup |
-| Increment | O(log M) | Rebalancing required |
-| Range query | O(log M + N) | Efficient skip list |
-| Intersection | O(N*K log M) | N = smallest set, K = sets |
+```python
+def add_latency_sample(service, latency_ms):
+    """Record latency measurement"""
+    r.zadd(f'latency:{service}', {str(time.time()): latency_ms})
 
-## Memory Efficiency
+def get_percentile(service, percentile=95):
+    """Get P95 latency"""
+    samples = r.zrange(f'latency:{service}', 0, -1)
+    if not samples:
+        return None
+    
+    # Calculate percentile
+    index = int(len(samples) * (percentile / 100))
+    return float(samples[index])
+```
 
-- Skip list overhead: ~40 bytes per element
-- Efficient for 1M+ members
-- Better than hashes for ranked access
-- More memory than sets but enables sorting
+---
 
-## Limitations
+## Performance
 
-- **Floating-point scores**: Cannot store integer-only data types
-- **Score precision**: Limited to IEEE 754 double precision (~15 digits)
-- **No negative infinity bounds**: Use -inf and +inf strings instead
-- **No member-to-member relationships**: Cannot query by member similarity
+```
+Operation                    Time         Memory
+─────────────────────────────────────────────
+ZADD                        O(log N)      16 bytes per member
+ZREM                        O(log N)      Constant
+ZSCORE                      O(1)          Constant
+ZRANK/ZREVRANK              O(log N)      Constant
+ZRANGE (N elements)         O(log N + N)  Returns N elements
+ZREVRANGE                   O(log N + N)  Returns N elements
+ZRANGEBYSCORE               O(log N + N)  Variable
+ZINCRBY                     O(log N)      Constant
+```
+
+**Key Insight**: Range queries return N elements, so ZREVRANGE leaderboard 0 9 returns 10 items O(log N + 10).
+
+---
 
 ## Best Practices
 
-1. **Use ZRANGE for top-N queries**: O(log M + N) is efficient
-2. **Store timestamps as integer milliseconds**: Better precision than float
-3. **Use ZREMRANGEBYRANK for cleanup**: Remove oldest entries efficiently
-4. **Index scores strategically**: Pre-normalize scores for consistent ranges
-5. **Combine with other structures**: Use hashes for rich attributes
-6. **Watch for concurrent updates**: Increment operations can race
+### 1. Use Sorted Sets for Rankings
 
-## Common Pitfalls
+```python
+# ✅ DO: Sorted set for leaderboard
+r.zadd('leaderboard', {'alice': 100, 'bob': 95})
+top = r.zrevrange('leaderboard', 0, 9)
 
-1. **Floating-point precision**: 1.1 + 2.2 ≠ 3.3 exactly
-2. **Large result sets**: ZRANGE returning millions of items blocks Redis
-3. **Expensive intersections**: Multiple large set intersections are slow
-4. **Memory with many sets**: Each member duplicated across sets
-5. **Unbounded growth**: ZSets without cleanup consume increasing memory
+# ❌ DON'T: Hash and manual sorting
+r.hset('scores', mapping={'alice': 100, 'bob': 95})
+# Then fetch all and sort in app (O(N log N))
+```
+
+### 2. Use ZREVRANGE for Top Results
+
+```python
+# ✅ DO: Get top N directly
+top_10 = r.zrevrange('leaderboard', 0, 9, withscores=True)
+
+# ❌ DON'T: Get all and slice
+all_scores = r.zrange('leaderboard', 0, -1)
+top_10 = all_scores[-10:]  # Wrong order!
+```
+
+### 3. Atomic Score Updates
+
+```python
+# ✅ DO: Atomic increment
+r.zincrby('leaderboard', 10, 'alice')
+
+# ❌ DON'T: Read-modify-write
+score = float(r.zscore('leaderboard', 'alice') or 0)
+r.zadd('leaderboard', {'alice': score + 10})
+# Race condition between read and write!
+```
+
+### 4. Use ZADD with Options
+
+```python
+# ✅ DO: Use CH option to track changes
+result = r.zadd('leaderboard', {'alice': 100, 'bob': 95}, ch=True)
+# Returns: number of changed elements
+
+# ✅ DO: Use NX for conditional add
+r.zadd('unique:ids', {'id1': 1}, nx=True)  # Only if doesn't exist
+```
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Wrong Range Boundaries
+
+```python
+# ❌ WRONG: Inclusive range
+r.zrevrange('leaderboard', 0, 9)   # Gets 10 items (0-9 inclusive)
+
+# ❌ WRONG: Python slice semantics
+# redis: 0 to 9 = 10 items
+# python: [0:9] = 9 items (not including 9)
+```
+
+### Mistake 2: Confusing ZRANK and ZREVRANK
+
+```python
+# ❌ WRONG: Using wrong rank function
+rank = r.zrank('leaderboard', 'alice')          # Rank from bottom
+# But you want rank from top!
+
+# ✅ RIGHT: Use ZREVRANK for leaderboards
+rank = r.zrevrank('leaderboard', 'alice')       # 0 = top player
+```
+
+### Mistake 3: Not Removing Old Entries
+
+```python
+# ❌ WRONG: Scores accumulate forever
+r.zadd('trending', {topic: timestamp})
+# After years: millions of old topics!
+
+# ✅ RIGHT: Remove old entries
+r.zremrangebyscore('trending', 0, time.time() - 86400)  # Remove older than 24h
+```
+
+### Mistake 4: Score Collisions
+
+```python
+# ❌ WRONG: Same score, unpredictable order
+r.zadd('leaderboard', {'alice': 100, 'bob': 100})
+# Which one is rank 1?
+
+# ✅ RIGHT: Include tiebreaker in score
+# Or use secondary sort in application
+sorted_players = sorted(r.zrevrange(...), key=lambda x: (score, name))
+```
+
+---
+
+## Next Steps
+
+- **[Streams](6-stream.md)** - Event logs
+- **[Hashes](4-hashes.md)** - Objects
+- **[Lists](2-lists.md)** - Queues
+
