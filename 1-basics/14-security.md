@@ -1,297 +1,446 @@
 # Redis Security
 
 ## Overview
-Redis is an in-memory data store that requires careful security configuration to protect sensitive data and prevent unauthorized access. Unlike traditional databases with built-in security models, Redis security is primarily configured through application-level controls and network isolation.
 
-⚠️ **Critical**: Redis is designed to be trusted. It assumes all users with access are trustworthy. Never expose Redis directly to the internet.
+Redis security involves authentication, network isolation, command restrictions, and TLS encryption. Multi-layered approach prevents unauthorized access and data breaches.
 
-## Key Security Considerations
+## Authentication
 
-### 1. Authentication
+### Basic Password Authentication
 
-#### Setting Password Authentication
 ```conf
 # redis.conf
-requirepass "your_strong_password_here"
-# Password must be at least 8 characters for production
+requirepass "your_secure_password"
 ```
 
-**Connecting with password:**
-```bash
-# Method 1: Pass password as argument
-redis-cli -a "your_strong_password_here"
+```python
+import redis
 
-# Method 2: Authenticate after connecting
-redis-cli
-> AUTH "your_strong_password_here"
-OK
+# Connect with password
+r = redis.Redis(
+    host='localhost',
+    port=6379,
+    password='your_secure_password'
+)
+
+r.ping()  # Returns True
 ```
 
-#### Redis 6.0+ ACL (Access Control Lists)
+### Password Requirements
 
-**Create users with specific permissions:**
+```
+Good password:
+- At least 16 characters
+- Mix of uppercase, lowercase, numbers, symbols
+- Random, not dictionary words
+- Example: "k9$mP@x2qL$nR&vW3zT"
+
+Weak passwords to avoid:
+- "redis" (too common)
+- "password123" (predictable)
+- "admin" (default-like)
+```
+
+## ACL (Access Control List) - Redis 6.0+
+
+### User Management
+
 ```redis
-# Create a read-only user
-ACL SETUSER readuser on >password123 ~* &* +get +mget -@all +@read
-
-# Create an admin user
-ACL SETUSER admin on >admin_password ~* &* +@all
-
 # List all users
 ACL LIST
 
-# Get user details
-ACL GETUSER admin
+# Create user
+ACL SETUSER alice on >password ~* &* +@all
+ACL SETUSER bob on >password ~user:* &* +get +set +del
+
+# Get user info
+ACL GETUSER alice
 
 # Delete user
-ACL DELUSER readuser
+ACL DELUSER bob
+
+# Save ACL config
+ACL SAVE
 ```
 
-**ACL Configuration File (redis.conf or acl.conf):**
-```conf
-user default on >default_password ~* &* +@all
-user readuser on >read_password ~* &* +@read +@fast -flushdb -flushall
-user writeuser on >write_password ~* &* +@write +@read
-user admin on >admin_password ~* &* +@all ~*
+### ACL Syntax Breakdown
+
+```
+ACL SETUSER <username> <flags> <passwords> <patterns> <permissions>
+
+Flags:
+  on/off              - Enable/disable user
+  +nopass             - No password required
+  
+Passwords:
+  >password           - Add password
+  <password           - Remove password
+  #hash               - SHA256 hash
+  
+Key Patterns:
+  ~*                  - All keys
+  ~user:*             - Keys matching pattern
+  ~*:session:*        - Nested patterns
+  
+Permissions:
+  +@all               - All permissions
+  +@admin             - Admin commands
+  +@read              - Read commands
+  +get +set +del      - Specific commands
+  -flushdb            - Deny specific command
 ```
 
-#### Best Practices for Authentication
-- Use strong passwords (20+ characters, mixed case, numbers, symbols)
-- Rotate passwords every 90 days
-- Never hardcode passwords (use environment variables, secrets manager)
-- Use different credentials for dev, staging, and production
-- Prefer ACL over single `requirepass` for production
-- Store passwords in environment variables or secret management tools
-- Use different permissions for different services
+### Python ACL Examples
 
-### 2. Network Security
+```python
+import redis
 
-#### Bind Configuration
+r = redis.Redis(password='admin_password')
+
+# Create application user (read-write)
+r.acl_setuser(
+    'app-user',
+    enabled=True,
+    passwords=['app_password'],
+    keys=['~app:*'],
+    categories=['+@all']
+)
+
+# Create read-only user
+r.acl_setuser(
+    'readonly',
+    enabled=True,
+    passwords=['readonly_pass'],
+    keys=['~*'],
+    categories=['+@read']
+)
+
+# Connect as app user
+app_redis = redis.Redis(
+    username='app-user',
+    password='app_password'
+)
+
+app_redis.get('app:key')  # Works
+app_redis.flushdb()       # Denied - not in permissions
+```
+
+## Network Security
+
+### Bind to Specific Address
+
 ```conf
-# redis.conf - DANGEROUS (exposes to everyone)
-bind 0.0.0.0
+# redis.conf
 
-# RECOMMENDED - Only localhost
+# Option 1: Localhost only
 bind 127.0.0.1
 
-# RECOMMENDED - Specific internal IP
-bind 10.0.1.5
+# Option 2: Specific interface
+bind 192.168.1.100
 
-# Multiple addresses
-bind 127.0.0.1 10.0.1.5
+# Option 3: Multiple interfaces
+bind 127.0.0.1 192.168.1.100
+
+# Option 4: Disable network (socket only)
+bind ""
 ```
 
-#### Protected Mode
+### Disable Dangerous Commands
+
 ```conf
-# redis.conf - Prevent external connections without authentication
-protected-mode yes
-```
-When enabled:
-- Rejects connections from non-localhost if no password set
-- Prevents accidental exposure
-- Still requires authentication even from localhost if requirepass is set
+# redis.conf
 
-#### Firewall Configuration (iptables example)
-```bash
-# Allow only from specific IP
-sudo iptables -A INPUT -p tcp --dport 6379 -s 10.0.1.0/24 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 6379 -j DROP
-
-# Allow specific host
-sudo iptables -A INPUT -p tcp --dport 6379 -s 192.168.1.100 -j ACCEPT
-
-# Verify rules
-sudo iptables -L -n
-```
-
-#### TLS/SSL Configuration
-```conf
-# redis.conf - Enable TLS
-tls-port 6380
-tls-cert-file /path/to/redis.crt
-tls-key-file /path/to/redis.key
-tls-ca-cert-file /path/to/ca.crt
-```
-
-**Connecting with TLS:**
-```bash
-redis-cli --tls \
-  --cert /path/to/client.crt \
-  --key /path/to/client.key \
-  --cacert /path/to/ca.crt \
-  -h redis.example.com \
-  -p 6380
-```
-
-#### VPN/SSH Tunneling
-```bash
-# SSH tunnel to Redis server
-ssh -L 6379:localhost:6379 user@redis-server.com
-
-# Then connect through tunnel
-redis-cli -h localhost -p 6379
-```
-
-### 3. Configuration Security
-
-#### Disable Dangerous Commands
-```conf
-# redis.conf - Completely disable commands
+# Disable commands entirely
 rename-command FLUSHDB ""
 rename-command FLUSHALL ""
 rename-command KEYS ""
 rename-command CONFIG ""
+rename-command SHUTDOWN ""
+
+# Rename to obscure commands
+rename-command FLUSHDB "xyzzy_flushdb_xyzzy"
+rename-command EVAL "xyzzy_eval_xyzzy"
 ```
 
-#### Rename Commands to Hidden Names
+### TLS/SSL Encryption
+
 ```conf
-# redis.conf - Rename to random/obscure names
-rename-command FLUSHDB "FLUSHDB_$(date +%s)"
-rename-command CONFIG "CONFIG_random_$(openssl rand -hex 8)"
+# redis.conf
+port 0                          # Disable unencrypted port
+tls-port 6380                   # TLS port
+tls-cert-file /path/to/redis.crt
+tls-key-file /path/to/redis.key
+tls-dh-params-file /path/to/redis.dh
+tls-ca-cert-file /path/to/ca.pem
+
+# Require TLS for replicas
+tls-replication yes
+
+# Require TLS for cluster
+tls-cluster yes
+```
+
+```python
+import redis
+
+# Connect via TLS
+r = redis.Redis(
+    host='secure-redis.com',
+    port=6380,
+    password='password',
+    ssl=True,
+    ssl_cert_reqs='required',
+    ssl_ca_certs='/path/to/ca.pem',
+    ssl_certfile='/path/to/client.crt',
+    ssl_keyfile='/path/to/client.key'
+)
+
+r.ping()
+```
+
+## Firewall Configuration
+
+### iptables (Linux)
+
+```bash
+# Allow only specific IP
+sudo iptables -A INPUT -p tcp -s 192.168.1.100 --dport 6379 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 6379 -j DROP
+
+# Allow from specific range
+sudo iptables -A INPUT -p tcp -s 192.168.1.0/24 --dport 6379 -j ACCEPT
+```
+
+### UFW (Ubuntu)
+
+```bash
+# Allow from specific IP
+sudo ufw allow from 192.168.1.100 to any port 6379
+
+# Allow from subnet
+sudo ufw allow from 192.168.1.0/24 to any port 6379
+
+# Deny all others
+sudo ufw default deny incoming
+```
+
+## Monitoring and Auditing
+
+### ACL Logging
+
+```redis
+# Enable ACL logging
+ACL LOG RESET
+ACL LOG GET 10
+
+# Output shows denied commands and failed auth attempts
+```
+
+### CLIENT INFO
+
+```python
+import redis
+
+r = redis.Redis(password='password')
+
+# List all clients
+clients = r.client_list()
+for client in clients:
+    print(client)
+
+# Get current client info
+info = r.client_info()
+print(f"Client: {info}")
+
+# Monitor client connections
+# Terminal: redis-cli
+# redis> CLIENT LIST
+# redis> MONITOR
+```
+
+## Security Patterns
+
+### Pattern 1: Development vs Production
+
+```python
+import os
+import redis
+
+def get_redis():
+    """Get Redis with environment-specific config"""
+    env = os.getenv('ENVIRONMENT', 'development')
+    
+    if env == 'production':
+        return redis.Redis(
+            host=os.getenv('REDIS_HOST'),
+            port=int(os.getenv('REDIS_PORT', 6379)),
+            password=os.getenv('REDIS_PASSWORD'),
+            ssl=True,
+            username=os.getenv('REDIS_USERNAME'),
+            # ACL enabled
+        )
+    else:  # Development
+        return redis.Redis(
+            host='localhost',
+            port=6379
+        )
+
+r = get_redis()
+```
+
+### Pattern 2: Credential Management
+
+```python
+import redis
+import os
+from cryptography.fernet import Fernet
+
+def get_secure_redis():
+    """Get Redis with encrypted credentials"""
+    # Load from environment or secure vault
+    host = os.getenv('REDIS_HOST')
+    port = int(os.getenv('REDIS_PORT', 6379))
+    
+    # Encrypted password from vault
+    encrypted_password = os.getenv('REDIS_PASSWORD_ENCRYPTED')
+    key = os.getenv('ENCRYPTION_KEY')
+    
+    cipher = Fernet(key)
+    password = cipher.decrypt(encrypted_password).decode()
+    
+    return redis.Redis(
+        host=host,
+        port=port,
+        password=password,
+        ssl=True
+    )
+
+r = get_secure_redis()
+```
+
+### Pattern 3: Key Expiration and Cleanup
+
+```python
+import redis
+
+class SecureRedis:
+    def __init__(self, password):
+        self.r = redis.Redis(
+            password=password,
+            decode_responses=True
+        )
+    
+    def set_temporary(self, key, value, ttl=3600):
+        """Set with automatic expiration"""
+        self.r.setex(key, ttl, value)
+    
+    def cleanup_expired(self):
+        """Remove expired sensitive keys"""
+        # Redis does this automatically
+        # But can manually cleanup if needed
+        pass
+
+secure_redis = SecureRedis('password')
+secure_redis.set_temporary('session:abc123', '{}', ttl=1800)
+```
+
+## Security Checklist
+
+### Development Environment
+- [ ] Protected mode enabled
+- [ ] Localhost binding only
+- [ ] No sensitive data stored
+- [ ] Password set (even if weak)
+- [ ] MONITOR disabled
+
+### Production Environment
+- [ ] Protected mode enabled ✓✓✓
+- [ ] Strong password (16+ chars, random)
+- [ ] ACL configured with roles
+- [ ] TLS/SSL encryption enabled
+- [ ] Specific IP binding (firewall)
+- [ ] Dangerous commands disabled (FLUSHDB, etc)
+- [ ] Regular password rotation
+- [ ] ACL logging enabled
+- [ ] Firewall rules configured
+- [ ] Regular security audits
+
+### Compliance
+- [ ] Data encryption at rest (RDB/AOF encrypted)
+- [ ] Encryption in transit (TLS)
+- [ ] Access logging
+- [ ] Audit trails
+- [ ] Backup security
+- [ ] Disaster recovery plan
+
+## Common Attacks and Prevention
+
+### Attack 1: Brute Force Attack
+
+**Prevention:**
+```python
+# Use strong passwords
+password = "k9$mP@x2qL$nR&vW3zT"  # 32 character, mixed
+
+# Limit connection attempts (firewall level)
+# fail2ban example
+# bantime = 3600  # Ban for 1 hour
+# maxretry = 5    # After 5 failed attempts
+```
+
+### Attack 2: Man-in-the-Middle (MITM)
+
+**Prevention:**
+```conf
+# Use TLS to encrypt traffic
+tls-port 6380
+tls-cert-file /path/to/redis.crt
+tls-key-file /path/to/redis.key
+```
+
+### Attack 3: Unauthorized Command Execution
+
+**Prevention:**
+```conf
+# Disable dangerous commands
+rename-command FLUSHDB ""
+rename-command EVAL ""
+rename-command SCRIPT ""
 rename-command SHUTDOWN ""
 ```
 
-#### Commands to Consider Disabling/Renaming
-| Command | Risk | Alternative |
-|---------|------|-------------|
-| FLUSHDB | Deletes all data in DB | Remove, rename, or ACL restrict |
-| FLUSHALL | Deletes all data | Remove, rename, or ACL restrict |
-| KEYS | Performance impact, information leak | Use SCAN with ACL |
-| CONFIG | Exposes/modifies server config | Remove or use ACL |
-| SHUTDOWN | Stops server | Remove or use ACL |
-| DEBUG | Low-level debugging | Remove for production |
-| MONITOR | Shows all commands | Restrict with ACL |
+### Attack 4: Data Exfiltration
 
-### 4. Data Protection
+**Prevention:**
+```python
+# Use READ-ONLY users
+r.acl_setuser('readonly', categories=['+@read'])
 
-#### File Permissions
-```bash
-# Restrict redis.conf to owner only
-chmod 600 /etc/redis/redis.conf
-
-# Restrict RDB dump files
-chmod 600 /var/lib/redis/dump.rdb
-
-# Restrict AOF files
-chmod 600 /var/lib/redis/appendonly.aof
-
-# Restrict Redis data directory
-chmod 700 /var/lib/redis/
-
-# Verify permissions
-ls -la /etc/redis/redis.conf
-ls -la /var/lib/redis/
+# Encrypt sensitive data before storing
+from cryptography.fernet import Fernet
+cipher = Fernet(key)
+encrypted = cipher.encrypt(sensitive_data.encode())
+r.set('encrypted_key', encrypted)
 ```
 
-#### Persistence Security
-```conf
-# redis.conf - Secure persistence files
-dir /var/lib/redis/          # Restricted directory
-dbfilename dump.rdb
-appendfilename appendonly.aof
+## Next Steps
 
-# Backup location (different partition/server)
-# Ensures data availability and disaster recovery
-```
+- [Persistence](15-persistence.md) - Secure backup strategies
+- [Protected Mode](13-protected-mode.md) - Network isolation
+- [Configuration](4-configuration.md) - All security settings
 
-#### Encryption at Rest
-Redis doesn't provide built-in encryption. Solutions:
-```bash
-# 1. Use encrypted filesystems (LUKS, FileVault)
-# 2. Encrypt RDB dumps before backup
-gpg --encrypt dump.rdb
+## Resources
 
-# 3. Use Redis Enterprise with encryption
-# 4. Implement application-level encryption
-```
+- **Redis Security**: https://redis.io/docs/management/security/
+- **ACL**: https://redis.io/docs/management/acl/
+- **TLS**: https://redis.io/docs/management/encryption/
 
-#### Backup Security
-```bash
-# Create encrypted backup
-tar czf redis-backup.tar.gz /var/lib/redis/
-gpg --symmetric redis-backup.tar.gz
+## Summary
 
-# Store backup securely
-# - Different server/location
-# - Access restricted
-# - Regularly test restore
-```
-
-### 5. Monitoring & Auditing
-
-#### Enable Logging
-```conf
-# redis.conf
-loglevel notice                    # debug, verbose, notice, warning
-logfile "/var/log/redis/redis.log"
-syslog-enabled yes
-syslog-ident redis
-```
-
-#### Monitor Commands
-```redis
-# Monitor all commands in real-time
-MONITOR
-
-# Get slow commands
-SLOWLOG GET 10
-
-# Check specific command latency
-SLOWLOG GET 100 WITHSCORES
-```
-
-#### Monitor Security Events
-```bash
-# Monitor authentication failures
-grep "AUTH" /var/log/redis/redis.log
-
-# Monitor dangerous commands
-grep -E "FLUSHDB|FLUSHALL|CONFIG" /var/log/redis/redis.log
-
-# Check client connections
-redis-cli CLIENT LIST
-```
-
-#### Set Up Alerting
-```bash
-# Script to check for suspicious activity
-#!/bin/bash
-
-REDIS_CLI="redis-cli -a password"
-
-# Check client count
-CLIENTS=$($REDIS_CLI INFO clients | grep connected_clients)
-if [ $CLIENTS -gt 100 ]; then
-    echo "Alert: Too many clients" | mail -s "Redis Alert" admin@example.com
-fi
-
-# Check memory usage
-MEMORY=$($REDIS_CLI INFO memory | grep used_memory_human)
-echo "Memory usage: $MEMORY"
-```
-
-### 6. Best Practices Checklist
-
-#### Development Environment
-- ✅ Enable local access only (bind 127.0.0.1)
-- ✅ Use `protected-mode yes`
-- ✅ Enable logging
-- ✅ Don't require complex passwords
-- ✅ Use single database
-
-#### Production Environment
-- ✅ **NEVER** expose to internet (use VPN/private network)
-- ✅ Enable requirepass with strong password
-- ✅ Implement ACL with user-based permissions
-- ✅ Bind to specific internal IP only
-- ✅ Enable TLS for client connections
-- ✅ Disable/rename dangerous commands
-- ✅ Restrict file permissions (600 for configs, 700 for directories)
-- ✅ Enable and monitor logging
-- ✅ Implement firewall rules
-- ✅ Regular backups with encryption
-- ✅ Keep Redis updated
-- ✅ Run Redis as non-root user
-- ✅ Use separate Redis instances per environment
-- ✅ Implement intrusion detection
-- ✅ Regular security audits
+- Use strong passwords and ACL for authentication
+- Bind to specific addresses and use firewalls
+- Enable TLS for remote connections
+- Disable dangerous commands
+- Monitor and audit access
+- Encrypt data at rest and in transit
+- Regular security reviews and updates

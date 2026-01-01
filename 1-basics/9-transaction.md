@@ -1,193 +1,551 @@
 # Redis Transactions
 
 ## Overview
-Redis transactions allow you to execute a series of commands atomically. All commands in a transaction are executed sequentially without interruption from other clients.
 
-## Key Commands
+Transactions execute a sequence of commands atomically. Redis guarantees all commands execute in order without interruption. Commands are queued with MULTI and executed with EXEC.
 
-### MULTI
-Starts a transaction block. All subsequent commands are queued until `EXEC` is called. Returns `OK` when successful.
+## Basic Transaction
 
-```
-MULTI
-# Response: OK
-```
+### Commands Queued
 
-### EXEC
-Executes all queued commands atomically in order and returns array of results. Returns `null` if transaction was aborted by WATCH.
-
-```
-EXEC
-# Response: array of command results or null
-```
-
-### DISCARD
-Cancels the transaction and discards all queued commands. Returns `OK`.
-
-```
-DISCARD
-# Response: OK
-```
-
-### WATCH
-Monitors one or more keys. If a watched key is modified before `EXEC`, the transaction is aborted. Useful for optimistic locking.
-
-```
-WATCH key1 key2 key3
-# Response: OK
-```
-
-### UNWATCH
-Cancels monitoring for all keys. Also called automatically by EXEC or DISCARD.
-
-```
-UNWATCH
-# Response: OK
-```
-
-## Transaction Flow
-
-1. **WATCH** (optional) - Monitor keys for changes
-2. **MULTI** - Begin transaction (returns OK)
-3. Queue commands - Each command returns QUEUED
-4. **EXEC** - Execute all commands atomically, or **DISCARD** to cancel
-
-## Basic Examples
-
-### Example 1: Simple Transaction
 ```redis
+# Start transaction
 MULTI
-OK
-SET key1 "value1"
-QUEUED
-SET key2 "value2"
-QUEUED
-INCR counter
-QUEUED
+# Output: OK
+
+# Queue commands
+SET key1 value1
+# Output: QUEUED
+
+SET key2 value2
+# Output: QUEUED
+
 GET key1
-QUEUED
+# Output: QUEUED
+
+# Execute all at once
 EXEC
-1) OK
-2) OK
-3) (integer) 1
-4) "value1"
+# Output:
+# 1) OK
+# 2) OK
+# 3) "value1"
 ```
 
-### Example 2: DISCARD Transaction
+### Discarding Transactions
+
 ```redis
 MULTI
-OK
-SET mykey "oldvalue"
-QUEUED
-INCR mykey
-QUEUED
+SET key "value"
+# Output: QUEUED
+
 DISCARD
-OK
-GET mykey
-(nil)  # Original value unchanged
+# Output: OK
+
+# Commands were not executed
+GET key
+# Output: (nil)
 ```
 
-### Example 3: Bank Transfer (Atomic Operation)
-```redis
-# Transfer $10 from account1 to account2
-WATCH account1 account2
-OK
-MULTI
-OK
-DECRBY account1 10
-QUEUED
-INCRBY account2 10
-QUEUED
-EXEC
-1) (integer) 90
-2) (integer) 110
+## Python Examples
+
+### Basic Transaction
+
+```python
+import redis
+
+r = redis.Redis()
+
+# Create pipeline with transaction
+with r.pipeline(transaction=True) as pipe:
+    pipe.set('key1', 'value1')
+    pipe.set('key2', 'value2')
+    pipe.incr('counter')
+    pipe.get('key1')
+    
+    results = pipe.execute()
+    # Output: [True, True, 1, 'value1']
 ```
 
-### Example 4: WATCH - Detected Modification
-```redis
-# Terminal 1
-WATCH mykey
-OK
-MULTI
-OK
-SET mykey "newvalue"
-QUEUED
+### MULTI/EXEC Explicitly
 
-# Terminal 2 (modifies watched key)
-SET mykey "changed"
-OK
+```python
+import redis
 
-# Terminal 1 continues
-EXEC
-(nil)  # Transaction aborted because watched key was modified
+r = redis.Redis()
+
+# Manual MULTI/EXEC
+pipe = r.pipeline()
+pipe.multi()
+pipe.set('key1', 'value1')
+pipe.set('key2', 'value2')
+results = pipe.execute()
 ```
 
-## Transaction Error Handling
+### DISCARD Example
 
-### Type 1: Queuing Errors (Before EXEC)
-```redis
-MULTI
-OK
-SET mykey value
-QUEUED
-INCR mykey          # Error: mykey is not an integer
-ERR value is not an integer or out of range
+```python
+import redis
 
-EXEC
-# Returns null or error
+r = redis.Redis()
+
+pipe = r.pipeline(transaction=True)
+pipe.set('key', 'value')
+
+# Cancel transaction
+pipe.reset()  # or use pipe.execute() without changes
 ```
 
-### Type 2: Execution Errors (During EXEC)
-```redis
-MULTI
-OK
-SET mykey "string"
-QUEUED
-INCR mykey          # Will fail during EXEC
-QUEUED
-EXEC
-# Partial execution - first command succeeds, second fails
+## Atomic Operations
+
+### Counter with Atomicity
+
+```python
+import redis
+
+r = redis.Redis()
+
+def atomic_increment():
+    """Atomic counter increment"""
+    with r.pipeline(transaction=True) as pipe:
+        pipe.incr('counter')
+        results = pipe.execute()
+    return results[0]
+
+# Safe from race conditions
+for _ in range(100):
+    atomic_increment()
+
+# Counter is exactly 100
+print(r.get('counter'))  # 100
 ```
 
-## Important Notes
+### Transfer Money Atomically
 
-- Commands are queued, not executed immediately after MULTI (return QUEUED)
-- Errors during queueing cause the transaction to fail
-- Redis does not support rollbacks (DISCARD cancels but doesn't roll back previous operations)
-- WATCH provides optimistic locking mechanism
-- Transactions are isolated per client connection
-- EXEC automatically calls UNWATCH
-- All commands in transaction execute in same order on the server
+```python
+import redis
 
-## Transaction vs Pipeline
+r = redis.Redis()
 
-| Feature | Transaction | Pipeline |
-|---------|-------------|----------|
-| Atomicity | ✅ Yes (MULTI/EXEC) | ❌ No (unless transaction=True) |
-| Order guaranteed | ✅ Yes | ✅ Yes |
-| Rollback support | ❌ No | ❌ No |
-| WATCH support | ✅ Yes | ✅ Yes (with transaction=True) |
-| Network efficiency | ✅ Yes | ✅ Yes |
-| Speed | Fast | Faster (no atomicity) |
-| Best for | Data consistency | Bulk operations |
+def transfer_funds(from_account, to_account, amount):
+    """Atomically transfer funds between accounts"""
+    with r.pipeline(transaction=True) as pipe:
+        pipe.decrby(f'account:{from_account}', amount)
+        pipe.incrby(f'account:{to_account}', amount)
+        
+        results = pipe.execute()
+    return results
 
-## When to Use Transactions
+# Usage
+r.set('account:alice', 1000)
+r.set('account:bob', 500)
 
-### Use Transactions When:
-- ✅ Data consistency is critical (bank transfers, inventory)
-- ✅ Multiple related keys must be updated together
-- ✅ You need atomicity guarantees
-- ✅ Optimistic locking with WATCH is beneficial
-- ✅ Preventing race conditions is important
+transfer_funds('alice', 'bob', 100)
 
-### Use Pipelines (Non-transactional) When:
-- ✅ Bulk operations without atomicity needs
-- ✅ Performance is more critical than consistency
-- ✅ Simple fire-and-forget operations
-- ✅ No dependencies between commands
+print(r.get('account:alice'))  # 900
+print(r.get('account:bob'))    # 600
+```
 
-### Use Lua Scripting When:
-- ✅ Complex logic needed with atomicity
-- ✅ Decision logic depends on Redis data
-- ✅ Need true server-side logic execution
-- ✅ Reduce network round-trips for complex operations
+## WATCH for Conditional Transactions
+
+### Watching Keys
+
+```python
+import redis
+
+r = redis.Redis()
+
+def conditional_transaction():
+    """Execute only if key hasn't changed"""
+    while True:
+        try:
+            # Watch key for changes
+            with r.pipeline(transaction=True) as pipe:
+                pipe.watch('key1')
+                
+                # Read current value
+                value = r.get('key1')
+                
+                # Prepare transaction
+                pipe.multi()
+                pipe.set('key1', int(value) + 1)
+                
+                # Execute - will fail if key1 changed
+                pipe.execute()
+                break
+        except redis.WatchError:
+            # Retry if key changed
+            continue
+
+# Usage
+r.set('key1', 10)
+conditional_transaction()
+print(r.get('key1'))  # 11
+```
+
+### Practical WATCH Example
+
+```python
+import redis
+
+r = redis.Redis()
+
+def optimistic_update(key, transform_func):
+    """Update with optimistic locking"""
+    max_retries = 3
+    retries = 0
+    
+    while retries < max_retries:
+        try:
+            with r.pipeline(transaction=True) as pipe:
+                pipe.watch(key)
+                
+                # Read
+                old_value = r.get(key)
+                new_value = transform_func(old_value)
+                
+                # Prepare write
+                pipe.multi()
+                pipe.set(key, new_value)
+                
+                # Execute
+                results = pipe.execute()
+                return new_value
+        except redis.WatchError:
+            retries += 1
+    
+    raise Exception(f"Failed to update {key} after {max_retries} retries")
+
+# Usage
+r.set('config:version', '1')
+new_version = optimistic_update('config:version', lambda v: str(int(v) + 1))
+print(new_version)  # '2'
+```
+
+## Common Patterns
+
+### Pattern 1: All-or-Nothing Update
+
+```python
+import redis
+
+r = redis.Redis()
+
+def update_user_atomically(user_id, updates):
+    """Update multiple user fields atomically"""
+    with r.pipeline(transaction=True) as pipe:
+        for field, value in updates.items():
+            pipe.hset(f'user:{user_id}', field, value)
+        
+        results = pipe.execute()
+    
+    return all(results)
+
+# Usage
+success = update_user_atomically(123, {
+    'name': 'Alice',
+    'email': 'alice@example.com',
+    'updated_at': '2024-01-01'
+})
+
+if success:
+    print("User updated atomically")
+```
+
+### Pattern 2: Conditional Counter
+
+```python
+import redis
+
+r = redis.Redis()
+
+def safe_counter_increment(key, max_value):
+    """Increment counter only if below max"""
+    while True:
+        try:
+            with r.pipeline(transaction=True) as pipe:
+                pipe.watch(key)
+                
+                current = r.get(key)
+                if not current:
+                    current = 0
+                else:
+                    current = int(current)
+                
+                if current < max_value:
+                    pipe.multi()
+                    pipe.incr(key)
+                    pipe.execute()
+                    return True
+                else:
+                    return False
+        except redis.WatchError:
+            continue
+
+# Usage
+r.set('requests:user123', 0)
+for i in range(5):
+    if safe_counter_increment('requests:user123', 3):
+        print(f"Request {i+1} allowed")
+    else:
+        print(f"Request {i+1} denied (limit exceeded)")
+```
+
+### Pattern 3: Race-Safe List Operations
+
+```python
+import redis
+
+r = redis.Redis()
+
+def atomic_list_append(list_key, item, max_length=100):
+    """Append to list, keeping max length"""
+    with r.pipeline(transaction=True) as pipe:
+        pipe.lpush(list_key, item)
+        pipe.ltrim(list_key, 0, max_length - 1)
+        
+        results = pipe.execute()
+    
+    return results
+
+# Usage
+r.delete('events')
+atomic_list_append('events', {'id': 1, 'type': 'login'})
+atomic_list_append('events', {'id': 2, 'type': 'purchase'})
+```
+
+## Error Handling
+
+### Syntax Errors
+
+```python
+import redis
+
+r = redis.Redis()
+
+try:
+    with r.pipeline(transaction=True) as pipe:
+        pipe.set('key', 'value')
+        pipe.incr('key')  # Will fail - key is not numeric
+        pipe.execute()
+except redis.ResponseError as e:
+    print(f"Transaction error: {e}")
+```
+
+### WATCH Conflicts
+
+```python
+import redis
+
+r = redis.Redis()
+
+def handle_watch_error():
+    """Handle WATCH conflicts gracefully"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            with r.pipeline(transaction=True) as pipe:
+                pipe.watch('key')
+                value = r.get('key')
+                
+                pipe.multi()
+                pipe.set('key', int(value) + 1)
+                pipe.execute()
+                return True
+        except redis.WatchError:
+            if attempt == max_retries - 1:
+                raise Exception("Too many retries")
+            continue
+
+handle_watch_error()
+```
+
+## Performance Considerations
+
+### Time Complexity
+
+```
+MULTI:  O(1)
+EXEC:   O(N) where N = number of queued commands
+WATCH:  O(N) where N = number of watched keys
+```
+
+### Latency
+
+```python
+# Single roundtrip:
+with r.pipeline(transaction=True) as pipe:
+    for i in range(1000):
+        pipe.set(f'key{i}', f'value{i}')
+    pipe.execute()
+# ~10-20ms for 1000 commands
+
+# vs individual commands:
+for i in range(1000):
+    r.set(f'key{i}', f'value{i}')
+# ~1-2s for 1000 commands
+```
+
+## Best Practices
+
+### 1. Keep Transactions Short
+
+```python
+# Good: Transaction is minimal
+with r.pipeline(transaction=True) as pipe:
+    pipe.set('counter', 100)
+    pipe.incr('total')
+    pipe.execute()
+
+# Avoid: Long operations in transaction
+with r.pipeline(transaction=True) as pipe:
+    # Fetch from DB
+    data = fetch_large_dataset()  # SLOW!
+    
+    # Process
+    processed = process_data(data)  # SLOW!
+    
+    # Update Redis
+    pipe.set('result', processed)
+    pipe.execute()
+```
+
+### 2. Watch Minimal Keys
+
+```python
+# Good: Watch only necessary keys
+with r.pipeline(transaction=True) as pipe:
+    pipe.watch('balance')  # Only watch balance
+    balance = r.get('balance')
+    
+    pipe.multi()
+    pipe.set('balance', int(balance) - 100)
+    pipe.execute()
+
+# Avoid: Watching too many keys
+with r.pipeline(transaction=True) as pipe:
+    pipe.watch('balance', 'total', 'daily_limit', 'account', 'user', ...)
+```
+
+### 3. Use Context Manager
+
+```python
+# Good: Automatic cleanup
+with r.pipeline(transaction=True) as pipe:
+    pipe.set('key', 'value')
+    pipe.execute()
+
+# Avoid: Manual management
+pipe = r.pipeline(transaction=True)
+pipe.set('key', 'value')
+pipe.execute()
+```
+
+### 4. Handle Watch Failures
+
+```python
+# Good: Retry on WATCH failure
+max_retries = 3
+for attempt in range(max_retries):
+    try:
+        with r.pipeline(transaction=True) as pipe:
+            pipe.watch('key')
+            # Transaction code
+            break
+    except redis.WatchError:
+        if attempt == max_retries - 1:
+            raise
+
+# Avoid: Ignoring WATCH failures
+try:
+    with r.pipeline(transaction=True) as pipe:
+        pipe.watch('key')
+        # Transaction code
+except redis.WatchError:
+    pass  # Silently ignore!
+```
+
+## Common Mistakes
+
+### ❌ Mixing WATCH and MULTI Incorrectly
+
+```python
+# Bad: WATCH after MULTI
+with r.pipeline(transaction=True) as pipe:
+    pipe.multi()  # Starts transaction
+    pipe.watch('key')  # Can't watch inside transaction!
+
+# Good: WATCH before MULTI
+with r.pipeline(transaction=True) as pipe:
+    pipe.watch('key')  # Watch first
+    pipe.multi()  # Then transaction
+```
+
+### ❌ Not Handling WATCH Errors
+
+```python
+# Bad: WATCH error ignored
+try:
+    with r.pipeline(transaction=True) as pipe:
+        pipe.watch('key')
+        pipe.execute()
+except redis.WatchError:
+    pass  # Transaction silently failed!
+
+# Good: Handle and retry
+try:
+    with r.pipeline(transaction=True) as pipe:
+        pipe.watch('key')
+        pipe.execute()
+except redis.WatchError:
+    print("Conflict detected, retrying...")
+    # Retry logic
+```
+
+### ❌ Assuming Atomicity Without Transaction
+
+```python
+# Bad: Not atomic
+r.set('key1', 'value1')
+r.set('key2', 'value2')
+# Other clients can see inconsistent state
+
+# Good: Atomic
+with r.pipeline(transaction=True) as pipe:
+    pipe.set('key1', 'value1')
+    pipe.set('key2', 'value2')
+    pipe.execute()
+```
+
+### ❌ Too Many Watched Keys
+
+```python
+# Bad: Watching too much
+pipe.watch('key1', 'key2', 'key3', 'key4', 'key5')
+# High chance of conflicts
+
+# Good: Watch only what's necessary
+pipe.watch('critical_key')
+```
+
+## Next Steps
+
+- [Pipelining](8-pipeline.md) - Non-atomic bulk operations
+- [Strings](6-strings.md) - Common transaction operations
+- [Data Structures](../2-data-structure/1-intro.md) - Advanced patterns
+
+## Resources
+
+- **Transactions**: https://redis.io/topics/transactions/
+- **WATCH**: https://redis.io/commands/watch/
+- **MULTI/EXEC**: https://redis.io/commands/multi/
+
+## Summary
+
+- MULTI/EXEC ensures atomic execution of queued commands
+- All commands execute in order without interruption
+- WATCH enables optimistic locking (WATCH + MULTI + EXEC)
+- Retry on WatchError when using WATCH
+- Keep transactions short for better concurrency
+- Context manager ensures proper cleanup
+- Atomic operations prevent race conditions

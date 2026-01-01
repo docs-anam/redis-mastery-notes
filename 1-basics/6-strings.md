@@ -1,331 +1,554 @@
 # Redis Strings
 
 ## Overview
-Strings are the most basic Redis data type. They store sequences of bytes and are binary-safe, meaning they can contain any kind of data (text, numbers, serialized objects).
 
-## Key Characteristics
-- **Binary-safe**: Can store any binary data
-- **Maximum size**: 512 MB per string
-- **Simple key-value pairs**: Straightforward get/set operations
-- **Atomic operations**: Increment/decrement operations are atomic
+Strings are the most fundamental Redis data type. A Redis string is a sequence of bytes - the simplest data structure Redis offers. Unlike many key-value stores, Redis strings can hold binary data (not just text).
 
-## Common Commands
+## String Basics
 
-### Basic Operations
-- `SET key value` - Set a string value
-- `GET key` - Retrieve a string value
-- `GETSET key value` - Set new value and return old value
-- `MSET key1 value1 key2 value2` - Set multiple strings
-- `MGET key1 key2` - Get multiple strings
+### Key Characteristics
 
-### Numeric Operations
-- `INCR key` - Increment integer value by 1
-- `INCRBY key increment` - Increment by specific amount
-- `DECR key` - Decrement integer value by 1
-- `DECRBY key decrement` - Decrement by specific amount
-- `INCRBYFLOAT key float` - Increment by floating-point value
+- **Binary-safe**: Can store any byte sequence (text, images, serialized objects)
+- **Maximum size**: 512MB per key
+- **Atomic operations**: String operations are atomic
+- **Indexed access**: Can work with specific bytes in a string
+- **Numeric operations**: Can increment/decrement if content is numeric
 
-### String Manipulation
-- `APPEND key value` - Append value to existing string
-- `STRLEN key` - Get string length
-- `GETRANGE key start end` - Get substring
-- `SETRANGE key offset value` - Overwrite part of string
+### Creating and Retrieving Strings
 
-### Expiration & Deletion
-- `SETEX key seconds value` - Set with expiration time
-- `PSETEX key milliseconds value` - Set with millisecond expiration
-- `DEL key` - Delete a key
+```redis
+# Set a string value
+SET key "Hello World"
 
-## Common Commands
-
-### Basic Operations
-- `SET key value` - Set a string value
-- `GET key` - Retrieve a string value
-- `GETSET key value` - Set new value and return old value
-- `MSET key1 value1 key2 value2` - Set multiple strings
-- `MGET key1 key2` - Get multiple strings
-- `SETNX key value` - Set only if key does NOT exist (returns 1 if set, 0 if exists)
-- `GETDEL key` - Get value and delete the key
-
-### Numeric Operations
-- `INCR key` - Increment integer value by 1
-- `INCRBY key increment` - Increment by specific amount
-- `DECR key` - Decrement integer value by 1
-- `DECRBY key decrement` - Decrement by specific amount
-- `INCRBYFLOAT key float` - Increment by floating-point value
-
-### String Manipulation
-- `APPEND key value` - Append value to existing string
-- `STRLEN key` - Get string length
-- `GETRANGE key start end` - Get substring
-- `SETRANGE key offset value` - Overwrite part of string
-
-### Expiration & Deletion
-- `SETEX key seconds value` - Set with expiration time
-- `PSETEX key milliseconds value` - Set with millisecond expiration
-- `DEL key` - Delete a key
-- `EXISTS key` - Check if key exists
-- `EXPIRE key seconds` - Set expiration on existing key
-- `TTL key` - Get time to live in seconds (-1 if no expiration, -2 if not exists)
-
-## Implementation Examples
-
-### 1. Basic Key-Value Storage
-```bash
-# Set a simple string value
-SET username:1001 "John Doe"
-GET username:1001
-# Output: "John Doe"
-
-# Set multiple values at once
-MSET user:1:name "Alice" user:1:email "alice@example.com" user:2:name "Bob"
-MGET user:1:name user:1:email user:2:name
-# Output: 
-# 1) "Alice"
-# 2) "alice@example.com"
-# 3) "Bob"
-```
-
-### 2. Counters and Increments
-```bash
-# Initialize a counter
-SET page:views 0
-INCR page:views
-INCR page:views
-GET page:views
-# Output: "2"
-
-# Increment by specific amount
-INCRBY user:1:points 10
-INCRBY user:1:points 5
-GET user:1:points
-# Output: "15"
-
-# Floating-point counter (e.g., temperature, ratings)
-SET temp:sensor1 22.5
-INCRBYFLOAT temp:sensor1 0.5
-GET temp:sensor1
-# Output: "23"
-```
-
-### 3. Session Management
-```bash
-# Store user session with expiration (30 seconds)
-SETEX session:abc123 30 '{"user_id":101,"role":"admin"}'
-GET session:abc123
-# Output: '{"user_id":101,"role":"admin"}'
-
-# Session expires after 30 seconds
-SLEEP 31
-GET session:abc123
-# Output: (nil)
-
-# Check expiration time
-SETEX session:xyz789 3600 '{"user_id":202}'
-TTL session:xyz789
-# Output: 3599 (approximately)
-```
-
-### 4. Atomic Get and Set
-```bash
-# Get old value and set new one atomically
-SET status:server1 "online"
-GETSET status:server1 "offline"
-# Output: "online"
-GET status:server1
-# Output: "offline"
-
-# Set only if doesn't exist
-SETNX newuser:1 "John"
-# Output: 1 (success)
-SETNX newuser:1 "Jane"
-# Output: 0 (failed, key exists)
-GET newuser:1
-# Output: "John"
-```
-
-### 5. String Manipulation
-```bash
-# Append to existing string
-SET message "Hello"
-APPEND message " World"
-GET message
+# Get the string value
+GET key
 # Output: "Hello World"
 
-# Get substring (0-indexed)
-GETRANGE message 0 4
-# Output: "Hello"
+# Get multiple values
+MGET key1 key2 key3
 
-# Overwrite part of string
-SETRANGE message 6 "Redis"
-GET message
-# Output: "Hello Redis"
-
-# String length
-STRLEN message
-# Output: 11
+# Get with condition (only if not exists)
+SETNX key "value"  # Only sets if key doesn't exist
 ```
 
-### 6. Rate Limiting Implementation
-```bash
-# Simple rate limiting: 10 requests per minute
-SET rate:user:1001 10
-DECR rate:user:1001
-DECR rate:user:1001
-GET rate:user:1001
-# Output: "8"
+## Basic String Commands
 
-# Reset limit with expiration
-SETEX rate:user:1001 60 10
-# Limit lasts for 60 seconds
+### Setting Values
 
-# Check if limit exceeded
-DECR rate:user:1001
-# Output: 9 (allowed)
+```redis
+# Simple set
+SET key "value"
+
+# Set with expiration (seconds)
+SET key "value" EX 60    # Expires in 60 seconds
+SET key "value" PX 60000 # Expires in 60000 milliseconds
+
+# Set only if key exists
+SET key "value" XX
+
+# Set only if key doesn't exist
+SET key "value" NX
+
+# Get old value and set new one
+GETSET key "newvalue"   # Returns old value, sets new one
+
+# Set multiple values
+MSET key1 "value1" key2 "value2" key3 "value3"
+
+# Set multiple only if none exist
+MSETNX key1 "value1" key2 "value2"
 ```
 
-### 7. Caching JSON Objects
-```bash
-# Store serialized JSON
-SET user:1001:profile '{"id":1001,"name":"Alice","email":"alice@example.com","age":28}'
-GET user:1001:profile
-# Output: '{"id":1001,"name":"Alice","email":"alice@example.com","age":28}'
+### Getting Values
 
-# Cache with expiration (1 hour)
-SETEX product:5001:details 3600 '{"id":5001,"name":"Laptop","price":999.99,"stock":50}'
+```redis
+# Get single value
+GET key
 
-# Retrieve and use
-GET product:5001:details
+# Get multiple values
+MGET key1 key2 key3
+# Output: ["value1", "value2", "value3"]
+
+# Get and delete
+GETDEL key  # Returns value and deletes
+
+# Get value and set new expiration
+GETEX key EX 60  # Returns value, sets 60 second expiration
+
+# Get substring
+GETRANGE key 0 4   # Get bytes 0-4
+GETRANGE key -3 -1 # Get last 3 bytes
 ```
 
-### 8. Atomic Counters for Analytics
-```bash
-# Page view counter
-INCR analytics:page:homepage:views
-INCR analytics:page:homepage:views
-GET analytics:page:homepage:views
-# Output: "2"
+## String Length Operations
 
-# Multi-day analytics with rolling window
-SETEX analytics:daily:2025-12-31 86400 100
-SETEX analytics:daily:2026-01-01 86400 150
-MGET analytics:daily:2025-12-31 analytics:daily:2026-01-01
-# Output:
-# 1) "100"
-# 2) "150"
+```redis
+# Get length of string (in bytes)
+STRLEN key
 
-# Increment and expire in one command
-SETEX clicks:campaign:xyz 3600 0
-INCR clicks:campaign:xyz
-INCR clicks:campaign:xyz
+# Example:
+SET msg "Hello"     # 5 bytes
+STRLEN msg          # Returns: 5
+
+# For UTF-8:
+SET emoji "👍"      # 4 bytes (UTF-8 encoding)
+STRLEN emoji        # Returns: 4
 ```
 
-### 9. Application Settings Storage
-```bash
-# Store application configuration
-MSET app:config:db_host "localhost" app:config:db_port "5432" app:config:timeout "30"
-MGET app:config:db_host app:config:db_port app:config:timeout
-# Output:
-# 1) "localhost"
-# 2) "5432"
-# 3) "30"
+## Numeric Operations
 
-# Update single setting
-SET app:config:debug_mode "true"
+### Increment and Decrement
+
+```redis
+# Set initial counter
+SET counter 10
+
+# Increment by 1
+INCR counter           # Now 11
+
+# Decrement by 1
+DECR counter           # Now 10
+
+# Increment by N
+INCRBY counter 5       # Now 15
+
+# Decrement by N
+DECRBY counter 3       # Now 12
+
+# Increment as float
+INCRBYFLOAT counter 0.5  # Now 12.5
+
+# Examples:
+SET page_views 0
+INCR page_views        # 1
+INCR page_views        # 2
+INCR page_views        # 3
+GET page_views         # "3"
 ```
 
-### 10. Distributed Lock with Expiration
-```bash
-# Acquire lock
-SETNX lock:resource:1 "process-123"
-# Output: 1 (success)
+### Performance of Numeric Operations
 
-# Lock expires after 10 seconds
-SETEX lock:resource:1 10 "process-123"
+```python
+# Why use INCR instead of GET/SET?
+import redis
+import time
 
-# Check if locked
-EXISTS lock:resource:1
-# Output: 1 (locked)
+r = redis.Redis()
 
-# Release lock
-DEL lock:resource:1
+# Method 1: GET and SET (slow, not atomic)
+def increment_slow():
+    val = int(r.get('counter'))
+    r.set('counter', val + 1)
+
+# Method 2: INCR (fast, atomic)
+def increment_fast():
+    r.incr('counter')
+
+# Benchmark
+start = time.time()
+for _ in range(10000):
+    increment_fast()
+end = time.time()
+print(f"INCR time: {end - start:.3f}s")  # ~0.05s
+
+start = time.time()
+for _ in range(10000):
+    increment_slow()
+end = time.time()
+print(f"GET/SET time: {end - start:.3f}s")  # ~0.15s
 ```
 
-## Use Cases
-- Caching user sessions
-- Storing counters and analytics
-- Rate limiting
-- Storing JSON or serialized objects
-- Real-time leaderboards
-- Distributed locks with TTL
-- Feature flags and configuration management
-- Activity tracking and timestamps
-- Distributed atomic operations
+## Append and Bit Operations
+
+### Append to Strings
+
+```redis
+# Initialize
+SET name "Hello"
+
+# Append text
+APPEND name " World"
+
+# Result
+GET name  # "Hello World"
+
+# Append returns new length
+APPEND name "!"  # Returns: 12
+```
+
+### Bit Operations
+
+```redis
+# Get bit value at position
+GETBIT key 0
+
+# Set bit value at position
+SETBIT key 0 1
+
+# Count set bits in string
+BITCOUNT key
+BITCOUNT key 0 1   # Count in range of bytes
+
+# Example: User visited days
+SET visited_days "0"
+SETBIT visited_days 0 1  # Day 0: visited
+SETBIT visited_days 2 1  # Day 2: visited
+BITCOUNT visited_days    # Visited 2 days
+```
+
+## Real-World Examples
+
+### Example 1: Session Storage
+
+```python
+import redis
+import json
+from datetime import datetime
+
+r = redis.Redis(decode_responses=True)
+
+# Store session
+session_data = {
+    'user_id': 123,
+    'username': 'alice',
+    'login_time': datetime.now().isoformat()
+}
+
+# Store as JSON string
+session_key = f"session:{session_id}"
+r.setex(session_key, 3600, json.dumps(session_data))  # 1 hour
+
+# Retrieve session
+session = json.loads(r.get(session_key))
+```
+
+### Example 2: Page View Counter
+
+```python
+import redis
+
+r = redis.Redis()
+
+# Increment page views
+def track_page_view(page_id):
+    r.incr(f"page:{page_id}:views")
+
+# Get page views
+def get_page_views(page_id):
+    views = r.get(f"page:{page_id}:views")
+    return int(views) if views else 0
+
+# Usage
+track_page_view("home")
+track_page_view("home")
+track_page_view("about")
+
+print(get_page_views("home"))   # 2
+print(get_page_views("about"))  # 1
+```
+
+### Example 3: Rate Limiting
+
+```python
+import redis
+import time
+
+r = redis.Redis()
+
+def rate_limit(user_id, limit=100, window=3600):
+    """Check if user is within rate limit"""
+    key = f"ratelimit:{user_id}"
+    
+    # Increment counter
+    current = r.incr(key)
+    
+    # Set expiration on first request
+    if current == 1:
+        r.expire(key, window)
+    
+    # Check if within limit
+    return current <= limit
+
+# Usage
+user_id = "user:123"
+for i in range(5):
+    allowed = rate_limit(user_id, limit=100)
+    print(f"Request {i+1}: {'Allowed' if allowed else 'Denied'}")
+```
+
+### Example 4: Cache with Expiration
+
+```python
+import redis
+import json
+import time
+
+r = redis.Redis(decode_responses=True)
+
+def get_user(user_id):
+    cache_key = f"user:{user_id}"
+    
+    # Try cache
+    cached = r.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    # Not in cache - fetch from database
+    user = fetch_from_database(user_id)  # Your DB call
+    
+    # Store in cache for 1 hour
+    r.setex(cache_key, 3600, json.dumps(user))
+    
+    return user
+
+def update_user(user_id, data):
+    # Update database
+    save_to_database(user_id, data)
+    
+    # Invalidate cache
+    r.delete(f"user:{user_id}")
+```
+
+## String Patterns
+
+### Pattern 1: JSON Serialization
+
+```python
+import redis
+import json
+
+r = redis.Redis(decode_responses=True)
+
+# Store complex object as JSON
+user = {'id': 1, 'name': 'Alice', 'email': 'alice@example.com'}
+r.set('user:1', json.dumps(user))
+
+# Retrieve and parse
+stored = json.loads(r.get('user:1'))
+print(stored['name'])  # Alice
+```
+
+### Pattern 2: Expiring Tokens
+
+```python
+import redis
+import uuid
+
+r = redis.Redis(decode_responses=True)
+
+# Create and store token
+token = str(uuid.uuid4())
+user_id = 123
+r.setex(f"token:{token}", 3600, user_id)  # Expires in 1 hour
+
+# Later: Validate token
+def validate_token(token):
+    user_id = r.get(f"token:{token}")
+    return user_id
+```
+
+### Pattern 3: Feature Flags
+
+```python
+import redis
+
+r = redis.Redis(decode_responses=True)
+
+# Store feature flag state
+r.set("feature:new_ui", "true")
+r.set("feature:beta_api", "false")
+
+# Check flag
+def is_enabled(feature_name):
+    return r.get(f"feature:{feature_name}") == "true"
+
+if is_enabled("new_ui"):
+    # Use new UI
+    pass
+```
+
+### Pattern 4: Distributed Lock
+
+```python
+import redis
+import uuid
+import time
+
+r = redis.Redis(decode_responses=True)
+
+def acquire_lock(resource, timeout=10):
+    lock_id = str(uuid.uuid4())
+    if r.set(f"lock:{resource}", lock_id, nx=True, ex=timeout):
+        return lock_id
+    return None
+
+def release_lock(resource, lock_id):
+    if r.get(f"lock:{resource}") == lock_id:
+        r.delete(f"lock:{resource}")
+
+# Usage
+lock = acquire_lock("database", timeout=5)
+try:
+    # Do critical work
+    pass
+finally:
+    release_lock("database", lock)
+```
+
+## Performance Characteristics
+
+### Time Complexity
+
+| Operation | Complexity | Notes |
+|-----------|-----------|-------|
+| SET | O(1) | Simple write |
+| GET | O(1) | Simple read |
+| APPEND | O(N) | N = length of appended string |
+| GETRANGE | O(N) | N = length of returned range |
+| SETRANGE | O(N) | N = length of range |
+| STRLEN | O(1) | Constant time |
+| INCR/DECR | O(1) | Atomic operation |
+| MGET | O(N) | N = number of keys |
+| MSET | O(N) | N = number of key-value pairs |
+
+### Memory Usage
+
+```python
+# String memory: key + value + overhead
+# Each string has ~40 bytes overhead
+
+# Examples:
+SET key "hello"        # ~45 bytes (4 bytes key + 5 bytes value + overhead)
+SET key "x" * 1000     # ~1040 bytes
+SET key "x" * 1_000_000  # ~1MB + overhead
+```
 
 ## Best Practices
 
-### Key Naming Conventions
-```
-user:{id}:profile
-user:{id}:session
-cache:{type}:{id}
-counter:{metric}:{date}
-lock:{resource}:{id}
-```
+### 1. Choose Appropriate Data Types
 
-### Memory Optimization
-- Use smaller key names in production
-- Compress large string values if possible
-- Set appropriate TTL to prevent memory bloat
-- Monitor memory usage with `INFO memory`
+```python
+# Good: Use strings for simple values
+r.set('user:1:name', 'Alice')
+r.set('count', 100)
 
-### Performance Tips
-- Use `MGET`/`MSET` instead of individual `GET`/`SET` for bulk operations
-- Use pipelines when executing multiple commands
-- Atomic operations are thread-safe (INCR, APPEND, etc.)
-- Remember: All operations are O(1) except GETRANGE, SETRANGE, and APPEND which are O(n)
-
-### Data Type Considerations
-| Scenario | Best Choice | Reason |
-|----------|------------|--------|
-| Simple key-value | String | O(1) operations, simplest structure |
-| Incrementing counter | String (INCR) | Atomic, fast, thread-safe |
-| Session storage | String (JSON) | Fast serialization/deserialization |
-| Cache expiration | SETEX | Built-in TTL support |
-| Multiple related values | String (JSON) or Hash | String for serialized, Hash for structured |
-| Bit operations | String (SETBIT) | Space-efficient for flags |
-
-## Command Comparison
-
-### SET Variants
-```bash
-SET key value              # Simple set
-SETNX key value           # Set if not exists (0 if exists)
-SETEX key seconds value   # Set with seconds expiration
-PSETEX key ms value       # Set with milliseconds expiration
-GETSET key value          # Atomic get-then-set
+# Consider: Use hashes for related data
+r.hset('user:1', mapping={'name': 'Alice', 'email': 'alice@example.com'})
 ```
 
-### GET Variants
-```bash
-GET key                   # Simple get
-MGET key1 key2 key3       # Get multiple values
-GETRANGE key 0 4          # Get substring
-GETDEL key                # Get and delete
-GETEX key EX 10           # Get and set expiration
+### 2. Set Expiration for Temporary Data
+
+```python
+# Good: Cache with expiration
+r.setex('cache:results', 3600, json.dumps(results))
+
+# Avoid: Permanent cache without invalidation
+r.set('cache:results', json.dumps(results))
 ```
 
-## Performance Analysis
+### 3. Use MGET/MSET for Multiple Keys
 
-| Operation | Time Complexity | Use Case |
-|-----------|-----------------|----------|
-| SET / GET | O(1) | High-frequency access |
-| INCR / DECR | O(1) | Counters, analytics |
-| APPEND | O(n) | Build strings gradually |
-| STRLEN | O(1) | Quick length check |
-| GETRANGE | O(n) | Extract substrings |
-| SETRANGE | O(n) | Partial overwrites |
-| MGET / MSET | O(n) | Bulk operations |
+```python
+# Good: Batch operations
+r.mset({'key1': 'val1', 'key2': 'val2', 'key3': 'val3'})
 
-## Performance
-Strings offer O(1) time complexity for most operations, making them extremely fast for simple key-value access patterns.
+# Avoid: Multiple round trips
+r.set('key1', 'val1')
+r.set('key2', 'val2')
+r.set('key3', 'val3')
+```
+
+### 4. Use Atomic Operations
+
+```python
+# Good: Atomic increment
+r.incr('counter')
+
+# Avoid: Non-atomic read/modify/write
+count = int(r.get('counter'))
+r.set('counter', count + 1)  # Race condition!
+```
+
+### 5. Serialize Before Storing
+
+```python
+import json
+
+# Good: Explicit serialization
+data = {'key': 'value'}
+r.set('data', json.dumps(data))
+
+# Avoid: Implicit string conversion
+r.set('data', data)  # Results in "{'key': 'value'}" (harder to parse)
+```
+
+## Common Mistakes
+
+### ❌ Not Setting Expiration for Temporary Data
+
+```python
+# Bad: Cache grows forever
+r.set('temp_data', data)
+
+# Good: Set expiration
+r.setex('temp_data', 300, data)  # 5 minutes
+```
+
+### ❌ Non-Atomic Increment
+
+```python
+# Bad: Race condition if multiple clients
+count = int(r.get('count'))
+r.set('count', count + 1)
+
+# Good: Atomic
+r.incr('count')
+```
+
+### ❌ Storing Large Objects Without Compression
+
+```python
+import json
+import zlib
+
+# Slow: Large JSON
+r.set('data', json.dumps(large_object))
+
+# Better: Compress
+compressed = zlib.compress(json.dumps(large_object))
+r.set('data', compressed)
+```
+
+### ❌ Assuming Numeric String Atomicity
+
+```python
+# Problematic
+r.set('balance', '100')
+balance = int(r.get('balance'))
+r.set('balance', str(balance - 50))  # Non-atomic!
+
+# Correct
+r.decrby('balance', 50)  # Atomic
+```
+
+## Next Steps
+
+- [Transactions](9-transaction.md) - Atomic multiple commands
+- [Pipeline](8-pipeline.md) - Batch multiple commands
+- [Data Structures](../2-data-structure/1-intro.md) - Other data types
+- [Persistence](15-persistence.md) - How strings are stored
+
+## Resources
+
+- **String Documentation**: https://redis.io/docs/data-types/strings/
+- **Commands**: https://redis.io/commands/?group=string
+- **String Patterns**: https://redis.io/docs/design-patterns/
+
+## Summary
+
+- Strings are binary-safe sequences of bytes (up to 512MB)
+- Atomic operations for counters (INCR/DECR)
+- Efficient serialization with JSON
+- Set expiration for temporary data (SETEX)
+- Use MGET/MSET for batch operations
+- Best for: Cache, sessions, counters, locks, temporary state
